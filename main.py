@@ -1,14 +1,18 @@
 import uvicorn
 import argparse
 import asyncio
+from fastapi import FastAPI
 
-from database import create_tables,get_db
+import whatsapp
+from database import create_tables
 
+app = FastAPI()
+app.include_router(whatsapp.router, prefix="/whatsapp", tags=["WhatsApp Bot"])
 
 async def initialize_db(create_db: bool): # verifica se a db existe
     if create_db:
         await create_tables()
-        
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
