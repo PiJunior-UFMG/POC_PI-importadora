@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from database import get_db, AsyncSessionLocal
 from models import Client as DBClient
 from models import Supplier, Product
-from agents import get_message_context, extract_product_tags, recommend_products
+from agents import get_message_context, extract_product_tags, recommend_products, summary_messages
 from schemas import ClientCache, ChatMessage
 
 router = APIRouter()
@@ -36,6 +36,15 @@ def add_to_history(cache: ClientCache, sender_type: str, content: str):
         step=cache.step,
         content=content
     ))
+
+async def update_client_summary(cache: ClientCache, db: AsyncSession):
+    """Gera o resumo geral do histórico de mensagens e atualiza o client_content no banco de dados."""
+    if cache.id:
+        resumo_geral = await summary_messages(cache.messages)
+        db_client = await db.get(DBClient, cache.id)
+        if db_client:
+            db_client.client_content = resumo_geral
+            await db.commit()
 
 def answer_message(body: str, cache: Optional[ClientCache] = None) -> Response:
     """
@@ -124,6 +133,8 @@ async def whatsapp_bot(
     original_message = form_data.get('Body', '').strip()
     lower_message = original_message.lower()
     sender = form_data.get('From', '')
+
+    cache = user_cache.get(sender)
     
     # --- COMANDOS ESPECIAIS ---
     if lower_message == '#reset':
@@ -144,8 +155,15 @@ async def whatsapp_bot(
             return answer_message(f"🗑️ O cliente '{db_client.user_name}' foi apagado.", None)
         return answer_message(f"⚠️ Cliente não encontrado.", None)
 
+    elif lower_message.startswith("#ch "):
+        if not cache:
+            return answer_message("⚠️ Nenhum cache ativo encontrado para alterar o step.")
+        new_step = original_message[4:].strip()
+        old_step = cache.step
+        cache.step = new_step
+        return answer_message(f"🔄 old_step: {old_step}, new_step: {new_step}", cache)
+    
     # --- LÓGICA DE ESTADOS / AUTENTICAÇÃO ---
-    cache = user_cache.get(sender)
     
     if not cache:
         stmt = select(DBClient).where(DBClient.user_number == sender)
@@ -193,9 +211,11 @@ async def whatsapp_bot(
         
         if sub_intention == "confirmar":
             cache.step = "finished"
+            await update_client_summary(cache, db)
             return answer_message("✅ Entendido! Confirmação de compra registrada com sucesso.", cache)
         elif sub_intention == "cancelar":
             cache.step = "finished"
+            await update_client_summary(cache, db)
             return answer_message("🔄 Pesquisa de compra cancelada. Como posso ajudar agora?", cache)
         elif sub_intention == "sugestoes":
             reply = "💡 Entendido! Estou buscando opções alternativas e mais baratas para você..."
@@ -224,6 +244,7 @@ async def whatsapp_bot(
             elif intention == "problema":
                 holding_msg = "⏳ Compreendi que há um problema. Vou registrar os detalhes e notificar a equipe, um momento..."
                 cache.step = "finished"
+                await update_client_summary(cache, db)
             else:
                 holding_msg = "⏳ Processando sua solicitação no sistema..."
             
@@ -237,7 +258,8 @@ async def whatsapp_bot(
                 reply = "Verifiquei e não encontrei registros recentes por aqui."
             else:
                 reply = "Desculpe, não compreendi muito bem. Poderia reformular?"
-                
+
+            await update_client_summary(cache, db)
             return answer_message(reply, cache)   
     
     return answer_message("Desculpe, ocorreu um erro de contexto.", cache)

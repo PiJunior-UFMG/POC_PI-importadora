@@ -10,7 +10,7 @@ class ClientCache(BaseModel):
     id: Optional[int] = None
     name: str = ""
     num: str
-    msg: List[ChatMessage] = []
+    messages: List[ChatMessage] = []
     step: str = "start"
 
 class ProductRecommendation(BaseModel):

@@ -9,7 +9,9 @@ import whatsapp
 from tasks import lifespan
 from database import create_tables
 
-app = FastAPI(lifespan=lifespan)
+#app = FastAPI(lifespan=lifespan)
+app = FastAPI()
+
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
