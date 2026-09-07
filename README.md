@@ -1,4 +1,3 @@
-POC-PI Importadora
 # 🤖 Assistente WhatsApp da P.I. Importadora
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
@@ -9,9 +8,9 @@ POC-PI Importadora
 
 ## Descrição
 
-Sistema de atendimento automatizado para WhatsApp utilizando IA (DeepSeek) para classificar intenções, extrair tags e recomendar produtos da distribuidora "P.I. Importadora". A aplicação integra-se com a API do Twilio para envio e recebimento de mensagens, utiliza o FastAPI para expor o webhook de forma assíncrona e oferece um painel administrativo (dashboard) para gestão de fornecedores, produtos, clientes e compras, além de métricas de consumo da IA.
+Sistema de atendimento automatizado para WhatsApp utilizando IA (DeepSeek) para classificar intenções, extrair tags, recomendar produtos, resolver problemas, gerar saudações proativas e extrair métricas de feedback da distribuidora "P.I. Importadora". A aplicação integra-se com a API do Twilio para envio e recebimento de mensagens, utiliza o FastAPI para expor o webhook de forma assíncrona e oferece um painel administrativo (dashboard) para gestão de fornecedores, produtos, clientes e compras, além de métricas de consumo da IA.
 
-Este projeto é um **MVP (Prova de Conceito)** desenvolvido com o objetivo de demonstrar a viabilidade técnica e comercial de um assistente virtual para vendas B2B. O código foi estruturado para priorizar a agilidade no desenvolvimento e a funcionalidade de ponta a ponta (end-to-end) do fluxo de compra. Como tal, ele apresenta limitações arquiteturais conhecidas inerentes a esta fase, como cache em memória não persistente, carregamento ineficiente do catálogo e fluxos de "problema/verificação" ainda incompletos, servindo como base sólida para iterações futuras.
+Este projeto é um **MVP (Prova de Conceito)** desenvolvido com o objetivo de demonstrar a viabilidade técnica e comercial de um assistente virtual para vendas B2B. O código foi estruturado para priorizar a agilidade no desenvolvimento e a funcionalidade de ponta a ponta (end-to-end) do fluxo de compra. Como tal, ele apresenta limitações arquiteturais conhecidas inerentes a esta fase, como cache em memória não persistente, carregamento ineficiente do catálogo e fluxos de "problema/verificação" ainda em evolução, servindo como base sólida para iterações futuras.
 
 ## Funcionalidades
 
@@ -26,6 +25,64 @@ Este projeto é um **MVP (Prova de Conceito)** desenvolvido com o objetivo de de
 | **Comandos Administrativos** | Comandos como `#reset`, `#del` e `#ch` para depuração e manutenção durante os testes. |
 | **Dashboard de Gestão** | Interface web para visualizar fornecedores, produtos, clientes, histórico de compras e métricas de uso da IA (tokens). |
 | **CRUD de Fornecedores e Produtos** | Permite adicionar/editar fornecedores, produtos e suas tags diretamente pelo dashboard. |
+| **Saudação Proativa** | Gera uma saudação personalizada com recomendação de produtos baseada no histórico do cliente. |
+| **Resolução de Problemas** | Oferece respostas empáticas, identifica o produto com defeito e sugere contato do fornecedor ou produtos de reposição. |
+| **Extração de Feedback** | Extrai métricas NPS e CSAT de mensagens de avaliação em linguagem natural. |
+
+## Diagrama Entidade-Relacionamento (ER)
+
+```mermaid
+erDiagram
+    User {
+        int user_id PK
+        string user_name
+        string user_number
+        string user_type "discriminador (client/seller)"
+    }
+
+    Client {
+        int client_id PK, FK "herda de User.user_id"
+        datetime client_last_op
+        text client_content
+    }
+
+    Seller {
+        int seller_id PK, FK "herda de User.user_id"
+        string token_id "único"
+        int sup_id FK
+    }
+
+    Supplier {
+        int sup_id PK
+        string sup_name
+        string sup_category
+        string sup_number
+        string sup_email
+        json sup_tags "lista de tags"
+    }
+
+    Product {
+        int prod_id PK
+        string prod_name
+        float prod_price
+        int sup_id FK
+        string prod_tag "tag específica do produto"
+    }
+
+    Purchase {
+        int pur_id PK
+        int client_id FK
+        int prod_id FK
+        datetime occurred_datetime
+    }
+
+    Client ||--o{ Purchase : "realiza"
+    Product ||--o{ Purchase : "incluído em"
+    Supplier ||--o{ Product : "fornece"
+    Supplier ||--o{ Seller : "possui"
+    User ||--|| Client : "herda"
+    User ||--|| Seller : "herda"
+```
 
 ## Como Executar
 
@@ -75,10 +132,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ## Estrutura de Diretórios
 
 ```
-├── agents.py                # Lógica de interação com a API DeepSeek (prompts, extração, recomendação)
+├── agents.py                # Lógica de interação com a API DeepSeek (prompts, extração, recomendação, feedback, etc.)
 ├── whatsapp.py              # Handlers do Twilio, gerenciamento de estados e cache do cliente
 ├── dashboard.py             # Endpoints e lógica do painel administrativo (FastAPI + Jinja2)
-├── schemas.py               # Modelos Pydantic para validação (Cache, Mensagens, Recomendações)
+├── schemas.py               # Modelos Pydantic para validação (Cache, Mensagens, Recomendações, Feedback)
 ├── models.py                # Definições SQLAlchemy das tabelas (herança User->Client/Seller, Supplier, Product, Purchase)
 ├── database.py              # Configuração da engine e sessão assíncrona
 ├── logger.py                # Utilitário para registro de uso de tokens da IA (console + arquivo)
@@ -88,7 +145,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 │   ├── extract_tags.txt
 │   ├── recommend_products.txt
 │   ├── confirm_purchase.txt
-│   └── summary_messages.txt
+│   ├── summary_messages.txt
+│   ├── proactive_greeting.txt
+│   ├── problem_resolver.txt
+│   └── extract_feedback.txt
 ├── templates/               # Templates HTML para o dashboard (Jinja2)
 │   └── dashboard.html
 ├── agent_metrics.log        # Arquivo de log gerado automaticamente com métricas de tokens
@@ -99,7 +159,6 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 - **Cache volátil**: O estado da conversa (`user_cache`) é armazenado em um dicionário em memória. Isso significa que, em caso de reinicialização do servidor ou uso de múltiplos processos (Gunicorn/Uvicorn workers), o histórico da sessão será perdido.
 - **Carregamento do catálogo**: Na etapa de recomendação, a aplicação carrega **todos** os fornecedores e produtos do banco para montar o contexto do prompt. Esta abordagem não escala para catálogos extensos e gera alto custo com tokens.
-- **Fluxos incompletos**: As intenções "problema" e "verificação" possuem implementações básicas (mensagens fixas) e não realizam consultas ao banco para status de pedidos ou coletam detalhes do problema relatado.
 - **Falta de fallback**: Depende estritamente da resposta da API DeepSeek. Se a IA falhar ou retornar um formato inesperado, o sistema retorna listas vazias ou mensagens genéricas sem regras de contingência.
 - **Dashboard com funcionalidades limitadas**: Embora permita visualização e edição de fornecedores/produtos, não há autenticação ou controle de acesso, e a gestão de clientes é apenas consultiva.
 
@@ -124,4 +183,3 @@ Lista de tarefas priorizadas para evolução do protótipo para um ambiente de p
 - [ ] **Busca semântica com embeddings**: Substituir a busca por `ilike` por similaridade de vetores para recomendações mais precisas.
 - [ ] **Sistema de filas (Celery/RQ)**: Mover tarefas pesadas (como `manage_agent`) para workers assíncronos dedicados.
 - [ ] **Dashboard avançado**: Incluir gráficos de uso da IA, análise de sentimentos das conversas e relatórios de vendas.
-- [ ] **Integração com sistemas externos**: Conectar a ERP ou sistema de estoque para verificar disponibilidade em tempo real.
