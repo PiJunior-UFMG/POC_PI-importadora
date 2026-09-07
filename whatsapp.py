@@ -12,8 +12,8 @@ from sqlalchemy.orm import selectinload
 # Imports do projeto
 from database import get_db, AsyncSessionLocal
 from models import Client as DBClient
-from models import Supplier, Product
-from agents import get_message_context, extract_product_tags, recommend_products, summary_messages
+from models import Supplier, Product,Purchase
+from agents import get_message_context, extract_product_tags, recommend_products, summary_messages,confirm_purchase
 from schemas import ClientCache, ChatMessage
 
 router = APIRouter()
@@ -105,6 +105,9 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
             recomendacoes = await recommend_products(original_message, tags_encontradas, db)
 
         if recomendacoes:
+            if cache:
+                cache.suggested_products = [rec.model_dump() for rec in recomendacoes]
+
             reply = "🛒 Encontrei estes produtos para o seu pedido:\n"
             for rec in recomendacoes:
                 reply += f"\n• *{rec.product_name}* ({rec.supplier_name})\n  Preço: R$ {rec.price:.2f} — Relevância: {rec.match_percentage}%\n"
@@ -210,9 +213,37 @@ async def whatsapp_bot(
         )
         
         if sub_intention == "confirmar":
+            selected_ids = confirm_purchase(original_message, cache.suggested_products)
+            
+            if not selected_ids:
+                return answer_message("Não consegui identificar qual produto você escolheu. Pode me confirmar o nome exato?", cache)
+            
+            stmt = select(Product).options(selectinload(Product.supplier)).where(Product.prod_id.in_(selected_ids))
+            result = await db.execute(stmt)
+            purchased_prods = result.scalars().all()
+            
+            if not purchased_prods:
+                return answer_message("Houve um problema ao localizar os produtos no banco. Vamos tentar de novo?", cache)
+
+            reply_lines = ["✅ *Compra confirmada com sucesso!* Seus pedidos:\n"]
+            
+            for p in purchased_prods:
+                nova_compra = Purchase(client_id=cache.id, prod_id=p.prod_id)
+                db.add(nova_compra)
+                
+                # Supondo que a model Supplier tenha o campo 'sup_contact'. Ajuste caso o nome seja outro.
+                numero = p.supplier.sup_number 
+                email = p.supplier.sup_email
+                reply_lines.append(f"📦 *{p.prod_name}*\n🏢 Distribuidora: {p.supplier.sup_name} (Contato: {numero}, Email: {email})\n")
+
+            await db.commit()
+            
+            cache.suggested_products = []
             cache.step = "finished"
             await update_client_summary(cache, db)
-            return answer_message("✅ Entendido! Confirmação de compra registrada com sucesso.", cache)
+            
+            return answer_message("\n".join(reply_lines), cache)
+        
         elif sub_intention == "cancelar":
             cache.step = "finished"
             await update_client_summary(cache, db)

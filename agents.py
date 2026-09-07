@@ -205,3 +205,32 @@ async def summary_messages(client_messages: list, target_step: Optional[str] = N
     except Exception as e:
         print(f"Erro ao gerar resumo de mensagens: {e}")
         return "Desculpe, ocorreu um erro ao gerar o resumo das mensagens."
+
+def confirm_purchase(client_message: str, suggested_products: list) -> list:
+    """Extrai os IDs dos produtos selecionados pelo cliente na confirmação."""
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "confirm_purchase.txt")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    formatted_prompt = template.replace(
+        "{suggested_products}", json.dumps(suggested_products, ensure_ascii=False)
+    ).replace(
+        "{client_message}", client_message
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Você é um extrator JSON de IDs de produtos."},
+                {"role": "user", "content": formatted_prompt}
+            ],
+            temperature=0.0,
+            max_tokens=50
+        )
+        content = response.choices[0].message.content.strip()
+        ids = json.loads(content)
+        return ids if isinstance(ids, list) else []
+    except Exception as e:
+        print(f"Erro ao confirmar compra com IA: {e}")
+        return []

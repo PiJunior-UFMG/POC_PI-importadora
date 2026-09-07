@@ -14,4 +14,4 @@ PRODUTOS DISPONÍVEIS ENCONTRADOS NO BANCO DE DADOS:
 REGRAS DE RESPOSTA:
 1. Retorne os produtos que melhor atendem ao pedido do cliente.
 2. Atribua um valor de "match_percentage" de 0 a 100 indicando o quão relevante o produto é para o pedido.
-3. Responda estritamente no formato JSON estruturado conforme o schema solicitado (contendo product_name, supplier_name, price e match_percentage).
+3. Responda estritamente no formato JSON estruturado conforme o schema solicitado (contendo product_id,product_name, supplier_name, price e match_percentage).
