@@ -37,7 +37,7 @@ def get_message_context(mensagem: str, prompt_filename: str, valid_categories: l
                 {"role": "user", "content": formatted_prompt}
             ],
             temperature=0.0,
-            max_tokens=15
+            max_tokens=30
         )
         intencao = response.choices[0].message.content.strip().lower()
 
