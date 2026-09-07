@@ -6,13 +6,15 @@ from twilio.twiml.messaging_response import MessagingResponse
 from twilio.rest import Client
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel
 from dotenv import load_dotenv
+from sqlalchemy.orm import selectinload
 
-# Imports do seu projeto
+# Imports do projeto
 from database import get_db, AsyncSessionLocal
 from models import Client as DBClient
-from agents import get_message_context 
+from models import Supplier, Product
+from agents import get_message_context, extract_product_tags, recommend_products
+from schemas import ClientCache
 
 router = APIRouter()
 
@@ -25,13 +27,6 @@ TWILIO_NUMBER = os.environ.get("TWILIO_NUMBER")
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 # configurações do cache
-class ClientCache(BaseModel):
-    id: Optional[int] = None
-    name: str = ""
-    num: str
-    msg: str = ""
-    step: str = "start"
-
 user_cache: Dict[str, ClientCache] = {}
 
 def answer_message(body: str, cache: Optional[ClientCache] = None) -> Response:
@@ -77,17 +72,57 @@ def send_message(to_number: str, body: str, cache: Optional[ClientCache] = None)
 async def manage_agent(sender_num: str, original_message: str, intention: str):
     """
     Gerencia o agente responsável com base na intenção já triada.
-    No futuro, cada 'if' aqui chamará um agente de IA especializado diferente.
     """
     cache = user_cache.get(sender_num)
     
-    # Roteamento baseado na intenção recebida
+    if intention == "saudacao":
+        if cache:
+            cache.step = "finished"
+        reply = "Olá! Como posso ajudar você hoje?" 
+        
+    elif intention == "compra":
+        if cache:
+            cache.step = "awaiting_purchase"
+            
+        # 1. Busca todo o catálogo bruto (ou resumo) para a primeira etapa de extração de tags
+        catalog_info_str = ""
+        async with AsyncSessionLocal() as db:
+            from models import Supplier, Product
+            from sqlalchemy.orm import selectinload
+            
+            stmt = select(Supplier).options(selectinload(Supplier.products))
+            result = await db.execute(stmt)
+            suppliers = result.scalars().all()
+            
+            catalog_lines = [
+                f"Produto: {prod.prod_name} | Categoria: {sup.sup_category} | Tag: {prod.prod_tag or 'nenhuma'}"
+                for sup in suppliers for prod in sup.products
+            ]
+            catalog_info_str = "\n".join(catalog_lines)
 
-    if intention == "compra":
-        reply = "Entendi que você deseja fazer um pedido! (Função de compra em desenvolvimento)."
+            # 2. Extrai as tags usando o agente de tags
+            tags_encontradas = extract_product_tags(original_message, catalog_info_str)
+            
+            # 3. Roda o novo agente de recomendação passando a sessão do banco
+            recomendacoes = await recommend_products(original_message, tags_encontradas, db)
+
+        # 4. Formata a resposta para o WhatsApp com base nos produtos encontrados
+        if recomendacoes:
+            reply = "🛒 Encontrei estes produtos para o seu pedido:\n"
+            for rec in recomendacoes:
+                reply += f"\n• *{rec.product_name}* ({rec.supplier_name})\n  Preço: R$ {rec.price:.2f} — Relevância: {rec.match_percentage}%\n"
+        else:
+            reply = f"🛒 Analisei seu pedido, mas não encontrei produtos compatíveis com as tags: {tags_encontradas}"
         
     elif intention == "problema":
+        if cache:
+            cache.step = "finished"
         reply = "Certo, entendi seu problema! vou avisar a chefia"
+        
+    elif intention == "verificacao":
+        if cache:
+            cache.step = "finished"
+        reply = "verifiquei e não encontrei nada!"
         
     else:
         reply = "Desculpe, não compreendi muito bem. Pode reformular?"
@@ -166,7 +201,7 @@ async def whatsapp_bot(
         
         return answer_message(f"Prazer, {cache.name}! Seu cadastro foi feito. ✅\nComo posso ajudar?", cache)
         
-    elif cache.step == 'finished':
+    elif cache.step == 'finished' or cache.step == 'awaiting_purchase':
         # 1. Identifica a intenção de forma instantânea via Regex (agents.py)
         intention = get_message_context(original_message)
         
