@@ -16,10 +16,6 @@ client = OpenAI(
     base_url="https://api.deepseek.com"
 )
 
-prompt_context_path = os.path.join(os.path.dirname(__file__), "prompts", "message_context.txt")
-with open(prompt_context_path, "r", encoding="utf-8") as f:
-    PROMPT_CONTEXT_TEMPLATE = f.read()
-
 prompt_tags_path = os.path.join(os.path.dirname(__file__), "prompts", "extract_tags.txt")
 with open(prompt_tags_path, "r", encoding="utf-8") as f:
     PROMPT_TAGS_TEMPLATE = f.read()
@@ -28,9 +24,16 @@ prompt_rec_path = os.path.join(os.path.dirname(__file__), "prompts", "recommend_
 with open(prompt_rec_path, "r", encoding="utf-8") as f:
     PROMPT_RECOMMEND_TEMPLATE = f.read()
 
-def get_message_context(mensagem: str) -> str:
-    """Analisa a intenção geral da mensagem usando o DeepSeek."""
-    formatted_prompt = PROMPT_CONTEXT_TEMPLATE.replace("{mensagem}", mensagem)
+def get_message_context(mensagem: str, prompt_filename: str, valid_categories: list) -> str:
+    """
+    Analisa a intenção da mensagem usando um prompt específico passado por parâmetro 
+    e valida o resultado contra as categorias permitidas.
+    """
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", prompt_filename)
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        template = f.read()
+        
+    formatted_prompt = template.replace("{mensagem}", mensagem)
     
     try:
         response = client.chat.completions.create(
@@ -40,15 +43,16 @@ def get_message_context(mensagem: str) -> str:
                 {"role": "user", "content": formatted_prompt}
             ],
             temperature=0.0,
-            max_tokens=10
+            max_tokens=15
         )
         intencao = response.choices[0].message.content.strip().lower()
-        categorias_validas = ["saudacao", "compra", "problema", "verificacao"]
-        return intencao if intencao in categorias_validas else "saudacao"
+        
+        # Retorna a intenção se for válida para este contexto, senão pega a primeira da lista como fallback
+        return intencao if intencao in valid_categories else valid_categories[0]
+        
     except Exception as e:
-        print(f"Erro ao consultar o DeepSeek para triagem: {e}")
-        return "saudacao"
-
+        print(f"Erro ao consultar o DeepSeek para triagem contextual ({prompt_filename}): {e}")
+        return valid_categories[0]
 
 def extract_product_tags(client_message: str, catalog_data: str) -> list:
     """

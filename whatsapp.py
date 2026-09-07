@@ -71,21 +71,12 @@ def send_message(to_number: str, body: str, cache: Optional[ClientCache] = None)
 
 async def manage_agent(sender_num: str, original_message: str, intention: str):
     """
-    Gerencia o agente responsável com base na intenção já triada.
+    Papel exclusivo: Despachar a execução para o agente de IA/DB responsável.
     """
     cache = user_cache.get(sender_num)
     
-    if intention == "saudacao":
-        if cache:
-            cache.step = "finished"
-        reply = "Olá! Como posso ajudar você hoje?" 
-        
-    elif intention == "compra":
-        if cache:
-            cache.step = "awaiting_purchase"
-            
-        # 1. Busca todo o catálogo bruto (ou resumo) para a primeira etapa de extração de tags
-        catalog_info_str = ""
+    if intention == "compra":
+        # Executa a lógica pesada de busca e recomendação no banco
         async with AsyncSessionLocal() as db:
             from models import Supplier, Product
             from sqlalchemy.orm import selectinload
@@ -100,34 +91,26 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
             ]
             catalog_info_str = "\n".join(catalog_lines)
 
-            # 2. Extrai as tags usando o agente de tags
             tags_encontradas = extract_product_tags(original_message, catalog_info_str)
-            
-            # 3. Roda o novo agente de recomendação passando a sessão do banco
             recomendacoes = await recommend_products(original_message, tags_encontradas, db)
 
-        # 4. Formata a resposta para o WhatsApp com base nos produtos encontrados
         if recomendacoes:
             reply = "🛒 Encontrei estes produtos para o seu pedido:\n"
             for rec in recomendacoes:
                 reply += f"\n• *{rec.product_name}* ({rec.supplier_name})\n  Preço: R$ {rec.price:.2f} — Relevância: {rec.match_percentage}%\n"
+            reply += "\n_Deseja confirmar algum item, ver opções mais baratas ou cancelar?_"
         else:
             reply = f"🛒 Analisei seu pedido, mas não encontrei produtos compatíveis com as tags: {tags_encontradas}"
-        
+            if cache:
+                cache.step = "finished"
+                
     elif intention == "problema":
         if cache:
             cache.step = "finished"
-        reply = "Certo, entendi seu problema! vou avisar a chefia"
-        
-    elif intention == "verificacao":
-        if cache:
-            cache.step = "finished"
-        reply = "verifiquei e não encontrei nada!"
-        
+        reply = "Certo, entendi seu problema! Vou avisar a chefia."
     else:
-        reply = "Desculpe, não compreendi muito bem. Pode reformular?"
+        reply = "Processamento concluído."
 
-    # Envia a resposta ativamente pelo Twilio REST
     send_message(to_number=sender_num, body=reply, cache=cache)
 
 @router.post("")
@@ -201,28 +184,54 @@ async def whatsapp_bot(
         
         return answer_message(f"Prazer, {cache.name}! Seu cadastro foi feito. ✅\nComo posso ajudar?", cache)
         
-    elif cache.step == 'finished' or cache.step == 'awaiting_purchase':
-        # 1. Identifica a intenção de forma instantânea via Regex (agents.py)
-        intention = get_message_context(original_message)
+    # --- ESTADO DE COMPRA EM ANDAMENTO ---
+    elif cache.step == 'awaiting_purchase':
+        # Usa o contexto específico de compras passado por parâmetro
+        sub_intention = get_message_context(
+            original_message, 
+            "message_context_purchase.txt", 
+            ["confirmar", "cancelar", "sugestoes", "continuar_busca"]
+        )
         
-        # 2. Lista de intenções que exigem processamento pesado (DB / IA)
+        if sub_intention == "confirmar":
+            cache.step = "finished"
+            return answer_message("✅ Entendido! Confirmação de compra registrada com sucesso.", cache)
+        elif sub_intention == "cancelar":
+            cache.step = "finished"
+            return answer_message("🔄 Pesquisa de compra cancelada. Como posso ajudar agora?", cache)
+        elif sub_intention == "sugestoes":
+            reply = "💡 Entendido! Estou buscando opções alternativas e mais baratas para você..."
+            background_tasks.add_task(manage_agent, sender, original_message, "compra")
+            return answer_message(reply, cache)
+        else:
+            reply = "🛒 Processando sua solicitação sobre os produtos..."
+            background_tasks.add_task(manage_agent, sender, original_message, "compra")
+            return answer_message(reply, cache)
+
+    # --- ESTADO NORMAL / FINALIZADO ---
+    elif cache.step == 'finished':
+        # Identifica a intenção global usando o prompt padrão
+        intention = get_message_context(
+            original_message, 
+            "message_context.txt", 
+            ["saudacao", "compra", "problema", "verificacao"]
+        )
+        
         heavy_intentions = ["compra", "problema"]
         
         if intention in heavy_intentions:
             if intention == "compra":
                 holding_msg = "⏳ Entendi que deseja fazer um pedido. Vou buscar os produtos disponíveis no banco de dados, só um instante..."
+                cache.step = "awaiting_purchase" # Trava no estado de compra
             elif intention == "problema":
                 holding_msg = "⏳ Compreendi que há um problema. Vou registrar os detalhes e notificar a equipe, um momento..."
+                cache.step = "finished"
             else:
                 holding_msg = "⏳ Processando sua solicitação no sistema..."
             
-            # Aciona o gerenciador de agentes em segundo plano
             background_tasks.add_task(manage_agent, sender, original_message, intention)
-            
-            # Responde rápido ao webhook com o aviso contextual
             return answer_message(holding_msg, cache)
 
-        # mensagens que são mais leves de processar (envio rápido)
         else:           
             if intention == "saudacao":
                 reply = "Olá! Como posso ajudar você hoje?"
@@ -231,7 +240,6 @@ async def whatsapp_bot(
             else:
                 reply = "Desculpe, não compreendi muito bem. Poderia reformular?"
                 
-            # Retorna a resposta direta imediatamente
             return answer_message(reply, cache)   
     
     return answer_message("Desculpe, ocorreu um erro de contexto.", cache)

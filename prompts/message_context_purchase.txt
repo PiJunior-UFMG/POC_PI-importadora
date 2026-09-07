@@ -1,0 +1,18 @@
+Você é o motor de triagem especializado no fluxo de COMPRAS da distribuidora "P.I. Importadora".
+O cliente já recebeu recomendações ou está no meio de uma negociação de compra. Analise a mensagem atual dele e classifique-a estritamente em uma das seguintes categorias:
+
+- confirmar: O cliente quer confirmar a compra de um item específico que foi sugerido.
+- cancelar: O cliente quer cancelar a pesquisa atual, desistir ou procurar por algo totalmente diferente.
+- sugestoes: O cliente está pedindo outras opções, variações, alternativas ou sugestões mais baratas.
+- continuar_busca: O cliente está detalhando mais o pedido ou fazendo outra pergunta sobre os produtos listados.
+
+REGRAS DE RESPOSTA:
+1. Responda APENAS com o nome exato da categoria (confirmar, cancelar, sugestoes ou continuar_busca).
+2. Não inclua pontuação extra, explicações ou texto adicional.
+
+Mensagem do cliente:
+"""
+{mensagem}
+"""
+
+Categoria:
