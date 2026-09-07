@@ -86,11 +86,19 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
     cache = user_cache.get(sender_num)
     
     if intention == "compra":
-        # Executa a lógica pesada de busca e recomendação no banco
         async with AsyncSessionLocal() as db:
-            from models import Supplier, Product
+            from models import Supplier, Product, Client as DBClient
             from sqlalchemy.orm import selectinload
+            from sqlalchemy import select
             
+            # 1. Resgata o resumo histórico do cliente logo de cara
+            client_summary = ""
+            if cache and cache.id:
+                db_client = await db.get(DBClient, cache.id)
+                if db_client and db_client.client_content:
+                    client_summary = db_client.client_content
+
+            # 2. Busca catálogo geral
             stmt = select(Supplier).options(selectinload(Supplier.products))
             result = await db.execute(stmt)
             suppliers = result.scalars().all()
@@ -101,22 +109,34 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
             ]
             catalog_info_str = "\n".join(catalog_lines)
 
-            tags_encontradas = extract_product_tags(original_message, catalog_info_str)
-            recomendacoes = await recommend_products(original_message, tags_encontradas, db)
+            # 3. Extrai tags COM O CONTEXTO DO HISTÓRICO
+            tags_encontradas = extract_product_tags(original_message, catalog_info_str, client_summary)
+            
+            previously_suggested = cache.suggested_products if cache else []
+            
+            # 4. Chama a recomendação
+            recomendacoes = await recommend_products(
+                client_message=original_message, 
+                tags=tags_encontradas, 
+                db_session=db,
+                previously_suggested=previously_suggested,
+                client_summary=client_summary
+            )
 
         if recomendacoes:
             if cache:
-                cache.suggested_products = [rec.model_dump() for rec in recomendacoes]
+                cache.suggested_products.extend([rec.model_dump() for rec in recomendacoes])
 
-            reply = "🛒 Encontrei estes produtos para o seu pedido:\n"
+            reply = "🛒 Encontrei estas novas opções para o seu pedido:\n"
             for rec in recomendacoes:
                 reply += f"\n• *{rec.product_name}* ({rec.supplier_name})\n  Preço: R$ {rec.price:.2f} — Relevância: {rec.match_percentage}%\n"
-            reply += "\n_Deseja confirmar algum item, ver opções mais baratas ou cancelar?_"
+            reply += "\n_Deseja confirmar algum item, ver outras opções ou cancelar?_"
         else:
-            reply = f"🛒 Analisei seu pedido, mas não encontrei produtos compatíveis com as tags: {tags_encontradas}"
+            texto_tags = ", ".join(tags_encontradas) if tags_encontradas else "sugestões gerais"
+            reply = f"🛒 Analisei seu pedido, mas não encontrei novos produtos compatíveis com: {texto_tags}"
             if cache:
                 cache.step = "finished"
-                
+
     elif intention == "problema":
         if cache:
             cache.step = "finished"
@@ -244,14 +264,16 @@ async def whatsapp_bot(
             
             return answer_message("\n".join(reply_lines), cache)
         
-        elif sub_intention == "cancelar":
-            cache.step = "finished"
-            await update_client_summary(cache, db)
-            return answer_message("🔄 Pesquisa de compra cancelada. Como posso ajudar agora?", cache)
         elif sub_intention == "sugestoes":
             reply = "💡 Entendido! Estou buscando opções alternativas e mais baratas para você..."
             background_tasks.add_task(manage_agent, sender, original_message, "compra")
             return answer_message(reply, cache)
+            
+        elif sub_intention == "continuar_busca":
+            reply = "🔍 Entendido! Vou refinar a busca considerando seu pedido e histórico. Só um instante..."
+            background_tasks.add_task(manage_agent, sender, original_message, "compra")
+            return answer_message(reply, cache)
+            
         else:
             reply = "🛒 Processando sua solicitação sobre os produtos..."
             background_tasks.add_task(manage_agent, sender, original_message, "compra")

@@ -47,11 +47,14 @@ def get_message_context(mensagem: str, prompt_filename: str, valid_categories: l
         print(f"Erro ao consultar o DeepSeek para triagem contextual ({prompt_filename}): {e}")
         return valid_categories[0]
 
-def extract_product_tags(client_message: str, catalog_data: str) -> list:
+def extract_product_tags(client_message: str, catalog_data: str, client_summary: str = "") -> list:
     """
     Agente responsável por extrair as tags relevantes com base no pedido do cliente 
     e nos dados atuais do catálogo da distribuidora.
     """
+    # Se o resumo for vazio, garante que a IA não se confunda
+    summary_text = client_summary if client_summary else "Sem histórico recente."
+
     prompt_tags_path = os.path.join(os.path.dirname(__file__), "prompts", "extract_tags.txt")
     with open(prompt_tags_path, "r", encoding="utf-8") as f:
         PROMPT_TAGS_TEMPLATE = f.read()
@@ -60,6 +63,7 @@ def extract_product_tags(client_message: str, catalog_data: str) -> list:
         PROMPT_TAGS_TEMPLATE
         .replace("{catalog_data}", catalog_data)
         .replace("{client_message}", client_message)
+        .replace("{client_summary}", summary_text)
     )
     
     try:
@@ -85,38 +89,49 @@ def extract_product_tags(client_message: str, catalog_data: str) -> list:
         print(f"Erro ao extrair tags com o DeepSeek: {e}")
         return []
 
-async def recommend_products(client_message: str, tags: list, db_session) -> list:
+async def recommend_products(
+    client_message: str, 
+    tags: list, 
+    db_session, 
+    previously_suggested: list = None,
+    client_summary: str = ""
+) -> list:
     """
-    1. Faz a query no banco de dados filtrando pelos produtos que contêm as tags.
-    2. Envia para o DeepSeek junto com a mensagem do cliente para pontuar a relevância.
+    Faz a busca no banco usando as tags e aciona a IA para ranquear os produtos,
+    levando em consideração o histórico do cliente e o que já foi oferecido na sessão.
     """
+    from models import Supplier, Product
+    from sqlalchemy import select, or_
+    from sqlalchemy.orm import selectinload
+    import json
+    from schemas import ProductRecommendationList
 
-    if not tags:
-        return []
-
-    prompt_rec_path = os.path.join(os.path.dirname(__file__), "prompts", "recommend_products.txt")
-    with open(prompt_rec_path, "r", encoding="utf-8") as f:
-        PROMPT_RECOMMEND_TEMPLATE = f.read()
-    
-    # Query no banco buscando produtos cujas tags ou categorias combinem com as extraídas
-    # (Buscando em Product.prod_tag ou Supplier.sup_category/sup_tags)
-    stmt = (
-        select(Product)
-        .join(Supplier)
-        .options(selectinload(Product.supplier))
-        .where(
-            or_(*[Product.prod_tag.ilike(f"%{tag}%") for tag in tags] + 
-                [Supplier.sup_category.ilike(f"%{tag}%") for tag in tags])
+    if tags:
+        stmt = (
+            select(Product)
+            .join(Supplier)
+            .options(selectinload(Product.supplier))
+            .where(
+                or_(*[Product.prod_tag.ilike(f"%{tag}%") for tag in tags] + 
+                    [Supplier.sup_category.ilike(f"%{tag}%") for tag in tags])
+            )
         )
-    )
+    else:
+        # Se a mensagem foi ampla (ex: "me recomende algo"), trazemos um lote geral
+        # e deixamos a IA escolher as melhores opções baseada no client_summary!
+        stmt = (
+            select(Product)
+            .join(Supplier)
+            .options(selectinload(Product.supplier))
+            .limit(40) # Ajuste o limite conforme o tamanho real do seu catálogo
+        )
+
     result = await db_session.execute(stmt)
     products = result.scalars().all()
 
     if not products:
-        # Se a busca exata por tags não retornar nada, pega uma listagem geral ou retorna vazio
         return []
 
-    # Formata os produtos encontrados para o prompt da IA
     products_data = []
     for p in products:
         products_data.append({
@@ -128,36 +143,44 @@ async def recommend_products(client_message: str, tags: list, db_session) -> lis
             "tag": p.prod_tag
         })
 
+    # Tratamento dos contextos opcionais para evitar variáveis nulas no prompt
+    prev_sug_str = json.dumps(previously_suggested, ensure_ascii=False) if previously_suggested else "[]"
+    summary_str = client_summary if client_summary else "Cliente sem histórico registrado."
+
+    prompt_tags_path = os.path.join(os.path.dirname(__file__), "prompts", "recommend_products.txt")
+    with open(prompt_tags_path, "r", encoding="utf-8") as f:
+        PROMPT_RECOMMEND_TEMPLATE = f.read()
+
     formatted_prompt = (
         PROMPT_RECOMMEND_TEMPLATE
         .replace("{client_message}", client_message)
         .replace("{extracted_tags}", str(tags))
+        .replace("{client_summary}", summary_str)
+        .replace("{previously_suggested}", prev_sug_str)
         .replace("{products_from_db}", json.dumps(products_data, ensure_ascii=False))
     )
 
     try:
-        # O DeepSeek / OpenAI API compatível aceita response_format para JSON estruturado
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "Você é um recomendador de produtos que responde em JSON estruturado."},
+                {"role": "system", "content": "Você é um recomendador de produtos inteligente que responde em JSON estruturado."},
                 {"role": "user", "content": formatted_prompt}
             ],
-            temperature=0.0,
-            response_format={"type": "json_object"} # Força o modelo a responder estritamente em JSON
+            temperature=0.2, # Ligeiramente maior que 0 para permitir certa criatividade nas alternativas
+            response_format={"type": "json_object"} 
         )
         
         content = response.choices[0].message.content
         data = json.loads(content)
-        
-        # Valida e converte usando o Pydantic do schemas.py
         validated_data = ProductRecommendationList(**data)
+        
         return validated_data.recommendations[:10]
         
     except Exception as e:
         print(f"Erro ao recomendar produtos com IA: {e}")
         return []
-
+    
 async def summary_messages(client_messages: list, target_step: Optional[str] = None) -> str:
     """
     Resgata o histórico de mensagens e faz um resumo objetivo.
