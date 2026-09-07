@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import String, Integer, Float, DateTime, Text, ForeignKey
+from sqlalchemy import String, Integer, Float, DateTime, Text, ForeignKey,JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncAttrs
 
@@ -23,27 +23,29 @@ class Supplier(Base):
 
     sup_id: Mapped[int] = mapped_column(primary_key=True)
     sup_name: Mapped[str] = mapped_column(String(150))
-    sup_category: Mapped[SupplierCategory] = mapped_column()
+    sup_category: Mapped[str] = mapped_column(String(50))
     sup_number: Mapped[str] = mapped_column(String(20))
     sup_email: Mapped[str] = mapped_column(String(150))
+    
+    # Nova coluna para armazenar a lista de tags (Ex: ["gamer", "escritório", "hardware"])
+    sup_tags: Mapped[list[str]] = mapped_column(JSON, default=list)
 
-    # Relacionamentos (1:N)
     products: Mapped[List["Product"]] = relationship(back_populates="supplier", cascade="all, delete-orphan")
     sellers: Mapped[List["Seller"]] = relationship(back_populates="supplier")
-
 
 class Product(Base):
     __tablename__ = "product"
 
     prod_id: Mapped[int] = mapped_column(primary_key=True)
     prod_name: Mapped[str] = mapped_column(String(150))
-    prod_price: Mapped[float] = mapped_column(Float)
+    prod_price: Mapped[float] = mapped_column()
     sup_id: Mapped[int] = mapped_column(ForeignKey("supplier.sup_id"))
+    
+    # Nova coluna: A tag específica do produto
+    prod_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
-    # Relacionamentos
     supplier: Mapped["Supplier"] = relationship(back_populates="products")
     purchases: Mapped[List["Purchase"]] = relationship(back_populates="product")
-
 
 # 4. Estrutura de Herança (User -> Client, Seller)
 class User(Base):
