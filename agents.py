@@ -8,6 +8,7 @@ from typing import Optional
 
 from models import Supplier, Product
 from schemas import ProductRecommendation, ProductRecommendationList
+from logger import log_agent_usage
 
 load_dotenv()
 
@@ -39,7 +40,13 @@ def get_message_context(mensagem: str, prompt_filename: str, valid_categories: l
             max_tokens=15
         )
         intencao = response.choices[0].message.content.strip().lower()
-        
+
+        if response.usage:
+            log_agent_usage(
+                agent_name="get_message_context", 
+                prompt_tokens=response.usage.prompt_tokens, 
+                completion_tokens=response.usage.completion_tokens
+            )
         # Retorna a intenção se for válida para este contexto, senão pega a primeira da lista como fallback
         return intencao if intencao in valid_categories else valid_categories[0]
         
@@ -78,7 +85,13 @@ def extract_product_tags(client_message: str, catalog_data: str, client_summary:
         )
         
         content = response.choices[0].message.content.strip()
-        
+
+        if response.usage:
+            log_agent_usage(
+                agent_name="extract_product_tags", 
+                prompt_tokens=response.usage.prompt_tokens, 
+                completion_tokens=response.usage.completion_tokens
+            )
         # Converte a resposta texto em uma lista Python válida
         tags_list = json.loads(content)
         if isinstance(tags_list, list):
@@ -100,11 +113,6 @@ async def recommend_products(
     Faz a busca no banco usando as tags e aciona a IA para ranquear os produtos,
     levando em consideração o histórico do cliente e o que já foi oferecido na sessão.
     """
-    from models import Supplier, Product
-    from sqlalchemy import select, or_
-    from sqlalchemy.orm import selectinload
-    import json
-    from schemas import ProductRecommendationList
 
     if tags:
         stmt = (
@@ -170,7 +178,14 @@ async def recommend_products(
             temperature=0.2, # Ligeiramente maior que 0 para permitir certa criatividade nas alternativas
             response_format={"type": "json_object"} 
         )
-        
+
+        if response.usage:
+            log_agent_usage(
+                agent_name="recommend_products", 
+                prompt_tokens=response.usage.prompt_tokens, 
+                completion_tokens=response.usage.completion_tokens
+            )
+
         content = response.choices[0].message.content
         data = json.loads(content)
         validated_data = ProductRecommendationList(**data)
@@ -223,6 +238,12 @@ async def summary_messages(client_messages: list, target_step: Optional[str] = N
             temperature=0.2,
             max_tokens=300
         )
+        if response.usage:
+            log_agent_usage(
+                agent_name="summary_messages", 
+                prompt_tokens=response.usage.prompt_tokens, 
+                completion_tokens=response.usage.completion_tokens
+            )
         return response.choices[0].message.content.strip()
         
     except Exception as e:
@@ -251,6 +272,14 @@ def confirm_purchase(client_message: str, suggested_products: list) -> list:
             temperature=0.0,
             max_tokens=50
         )
+        
+        if response.usage:
+            log_agent_usage(
+                agent_name="confirm_purchase", 
+                prompt_tokens=response.usage.prompt_tokens, 
+                completion_tokens=response.usage.completion_tokens
+            )
+        
         content = response.choices[0].message.content.strip()
         ids = json.loads(content)
         return ids if isinstance(ids, list) else []
