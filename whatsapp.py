@@ -37,14 +37,22 @@ def add_to_history(cache: ClientCache, sender_type: str, content: str):
         content=content
     ))
 
-async def update_client_summary(cache: ClientCache, db: AsyncSession):
+async def update_client_summary(cache: ClientCache, db: Optional[AsyncSession] = None):
     """Gera o resumo geral do histórico de mensagens e atualiza o client_content no banco de dados."""
     if cache.id:
         resumo_geral = await summary_messages(cache.messages)
-        db_client = await db.get(DBClient, cache.id)
-        if db_client:
-            db_client.client_content = resumo_geral
-            await db.commit()
+        
+        if db:
+            db_client = await db.get(DBClient, cache.id)
+            if db_client:
+                db_client.client_content = resumo_geral
+                await db.commit()
+        else:
+            async with AsyncSessionLocal() as session:
+                db_client = await session.get(DBClient, cache.id)
+                if db_client:
+                    db_client.client_content = resumo_geral
+                    await session.commit()
 
 def answer_message(body: str, cache: Optional[ClientCache] = None) -> Response:
     """
@@ -137,6 +145,8 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
             if cache:
                 cache.step = "finished"
 
+        await update_client_summary(cache, db)
+
     elif intention == "saudacao":
         async with AsyncSessionLocal() as db:
             from models import Supplier, Product, Client as DBClient
@@ -169,12 +179,10 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
 
         if cache:
             cache.step = "finished"
+            await update_client_summary(cache, db)
 
     elif intention == "problema":
         async with AsyncSessionLocal() as db:
-            from models import Supplier, Product, Client as DBClient
-            from sqlalchemy.orm import selectinload
-            from sqlalchemy import select
             
             # 1. Resgata informações básicas e histórico (para a IA saber o que ele comprou antes)
             db_client = await db.get(DBClient, cache.id) if cache and cache.id else None
@@ -323,12 +331,23 @@ async def whatsapp_bot(
         
     # --- ESTADO DE COMPRA EM ANDAMENTO ---
     elif cache.step == 'awaiting_purchase':
-        # Usa o contexto específico de compras passado por parâmetro
-        sub_intention = get_message_context(
-            original_message, 
-            "message_context_purchase.txt", 
-            ["confirmar", "cancelar", "sugestoes", "continuar_busca"]
-        )
+        msg_lower = original_message.lower()
+        
+        # 1. FORÇAR CONFIRMAÇÃO: Se o usuário expressar claramente que quer fechar/levar itens
+        palavras_confirmacao = ["confirmar", "confirmo", "vou levar", "quero a", "quero o", "fechar", "pode fechar", "comprar"]
+        
+        if any(term in msg_lower for term in palavras_confirmacao):
+            sub_intention = "confirmar"
+        # 2. FORÇAR BUSCA/SUGESTÃO: Se ele estiver pedindo mais opções ou preço
+        elif any(term in msg_lower for term in ["barata", "barato", "outro", "outra", "mais", "sugest", "procur", "ver", "opções"]):
+            sub_intention = "sugestoes"
+        else:
+            # Caso seja ambíguo, recorre ao classificador de IA
+            sub_intention = get_message_context(
+                original_message, 
+                "message_context_purchase.txt", 
+                ["confirmar", "cancelar", "sugestoes", "continuار_busca"]
+            )
         
         if sub_intention == "confirmar":
             selected_ids = confirm_purchase(original_message, cache.suggested_products)
@@ -349,7 +368,6 @@ async def whatsapp_bot(
                 nova_compra = Purchase(client_id=cache.id, prod_id=p.prod_id)
                 db.add(nova_compra)
                 
-                # Supondo que a model Supplier tenha o campo 'sup_contact'. Ajuste caso o nome seja outro.
                 numero = p.supplier.sup_number 
                 email = p.supplier.sup_email
                 reply_lines.append(f"📦 *{p.prod_name}*\n🏢 Distribuidora: {p.supplier.sup_name} (Contato: {numero}, Email: {email})\n")
@@ -362,6 +380,12 @@ async def whatsapp_bot(
             recibo_texto += "\n\n_Para me ajudar a melhorar, como você avalia sua experiência hoje de 0 a 10? Pode deixar um comentário rápido se quiser!_ ⭐"
             
             return answer_message(recibo_texto, cache)
+
+        elif sub_intention == "cancelar":
+            cache.suggested_products = []
+            cache.step = "finished"
+            await update_client_summary(cache, db)
+            return answer_message("🔄 Pesquisa de compra cancelada. Como posso ajudar agora?", cache)
         
         elif sub_intention == "sugestoes":
             reply = "💡 Entendido! Estou buscando opções alternativas e mais baratas para você..."
