@@ -5,48 +5,75 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Inicializa o cliente apontando para a API do DeepSeek (compatível com OpenAI)
-# O DeepSeek usa a baseUrl oficial: https://api.deepseek.com
+# Cliente DeepSeek (compartilhado ou instanciado)
 client = OpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com"
 )
 
-# Carrega o prompt externo da pasta prompts/
-prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "message_context.txt")
-with open(prompt_path, "r", encoding="utf-8") as f:
-    PROMPT_TEMPLATE = f.read()
+# 1. Carregamento do Prompt de Intenção (já existente)
+prompt_context_path = os.path.join(os.path.dirname(__file__), "prompts", "message_context.txt")
+with open(prompt_context_path, "r", encoding="utf-8") as f:
+    PROMPT_CONTEXT_TEMPLATE = f.read()
+
+# 2. Carregamento do Novo Prompt de Extração de Tags
+prompt_tags_path = os.path.join(os.path.dirname(__file__), "prompts", "extract_tags.txt")
+with open(prompt_tags_path, "r", encoding="utf-8") as f:
+    PROMPT_TAGS_TEMPLATE = f.read()
+
 
 def get_message_context(mensagem: str) -> str:
-    """
-    Analisa a mensagem do usuário utilizando o DeepSeek LLM 
-    com base no prompt estruturado em arquivo externo.
-    """
-    # Injeta a mensagem do usuário dentro do template do prompt
-    formatted_prompt = PROMPT_TEMPLATE.replace("{mensagem}", mensagem)
+    """Analisa a intenção geral da mensagem usando o DeepSeek."""
+    formatted_prompt = PROMPT_CONTEXT_TEMPLATE.replace("{mensagem}", mensagem)
     
     try:
-        # Chamada ao modelo leve e rápido do DeepSeek (deepseek-chat / V3)
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
                 {"role": "system", "content": "Você é um classificador de intenções preciso e conciso."},
                 {"role": "user", "content": formatted_prompt}
             ],
-            temperature=0.0,  # Zero criatividade para garantir respostas determinísticas
-            max_tokens=10     # Precisamos apenas de uma palavra como resposta
+            temperature=0.0,
+            max_tokens=10
         )
-        
-        # Limpa o texto retornado pela LLM
         intencao = response.choices[0].message.content.strip().lower()
-        
-        # Valida se a resposta está dentro das permitidas, caso contrário aplica fallback
         categorias_validas = ["saudacao", "compra", "problema", "verificacao"]
-        if intencao not in categorias_validas:
-            return "saudacao"
-            
-        return intencao
-        
+        return intencao if intencao in categorias_validas else "saudacao"
     except Exception as e:
         print(f"Erro ao consultar o DeepSeek para triagem: {e}")
-        return "saudacao"  # Fallback de segurança caso a API falhe
+        return "saudacao"
+
+
+def extract_product_tags(client_message: str, catalog_data: str) -> list:
+    """
+    Agente responsável por extrair as tags relevantes com base no pedido do cliente 
+    e nos dados atuais do catálogo da distribuidora.
+    """
+    formatted_prompt = (
+        PROMPT_TAGS_TEMPLATE
+        .replace("{catalog_data}", catalog_data)
+        .replace("{client_message}", client_message)
+    )
+    
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Você é um extrator de tags estruturadas em JSON."},
+                {"role": "user", "content": formatted_prompt}
+            ],
+            temperature=0.0,
+            max_tokens=150
+        )
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Converte a resposta texto em uma lista Python válida
+        tags_list = json.loads(content)
+        if isinstance(tags_list, list):
+            return tags_list
+        return []
+        
+    except Exception as e:
+        print(f"Erro ao extrair tags com o DeepSeek: {e}")
+        return []
