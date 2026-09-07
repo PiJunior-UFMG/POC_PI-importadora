@@ -147,7 +147,7 @@ async def recommend_products(client_message: str, tags: list, db_session) -> lis
         
         # Valida e converte usando o Pydantic do schemas.py
         validated_data = ProductRecommendationList(**data)
-        return validated_data.recommendations
+        return validated_data.recommendations[:10]
         
     except Exception as e:
         print(f"Erro ao recomendar produtos com IA: {e}")
