@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - P.I. Importadora</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="sidebar">
+        <h2>PI Admin</h2>
+        <ul>
+            <li><a href="#fornecedores">Fornecedores & Produtos</a></li>
+            <li><a href="#clientes">Histórico de Clientes</a></li>
+        </ul>
+    </div>
+
+    <div class="main-content">
+        <header>
+            <h1>Painel de Controle</h1>
+        </header>
+
+        <!-- Seção de Fornecedores -->
+        <section id="fornecedores">
+            
+            <div class="controls-bar">
+                <div class="card add-card" style="flex: 1; margin-bottom: 0;">
+                    <h3>Novo Fornecedor</h3>
+                    <form action="/dashboard/supplier/add" method="post" style="display: flex; gap: 10px;">
+                        <input type="text" name="name" placeholder="Nome do Fornecedor" required style="flex: 1;">
+                        <input type="text" name="category" placeholder="Categoria" required>
+                        <button type="submit" class="btn-primary">Criar</button>
+                    </form>
+                </div>
+                
+                <!-- Nova Barra de Pesquisa de Tags -->
+                <div class="card filter-card" style="flex: 1; margin-bottom: 0; margin-left: 20px;">
+                    <h3>Filtrar por Tag</h3>
+                    <input type="text" id="tagFilter" placeholder="🔍 Digite uma tag para filtrar..." onkeyup="filterTags()" style="width: 100%;">
+                </div>
+            </div>
+
+            <div style="margin-top: 24px;">
+                {% for sup in suppliers %}
+                <div class="card supplier-card">
+                    <!-- Cabeçalho Clicável (Dropdown) -->
+                    <div class="sup-header" onclick="toggleSection(this)">
+                        <div>
+                            <h2>{{ sup.sup_name }} <span>({{ sup.sup_category }})</span></h2>
+                        </div>
+                        
+                        <div class="header-actions" style="display: flex; gap: 15px; align-items: center;">
+                            <!-- Formulário de tag: stopPropagation evita que o clique feche a seção -->
+                            <form action="/dashboard/supplier/{{ sup.sup_id }}/tag" method="post" class="tag-form" onclick="event.stopPropagation()">
+                                <input type="text" name="new_tag" placeholder="Nova Tag..." required>
+                                <button type="submit" class="btn-secondary">+ Tag</button>
+                            </form>
+                            <span class="toggle-icon" style="font-size: 12px; color: #6b7280;">▼ Expandir</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Conteúdo Ocultável -->
+                    <div class="collapsible-content" style="display: none;">
+                        <div class="tags-container">
+                            <strong>Tags do Fornecedor:</strong>
+                            {% for tag in sup.sup_tags %}
+                                <span class="badge">{{ tag }}</span>
+                            {% else %}
+                                <span class="text-muted">Nenhuma tag cadastrada.</span>
+                            {% endfor %}
+                        </div>
+
+                        <h4 style="margin-top: 20px; margin-bottom: 10px;">Catálogo de Produtos:</h4>
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Produto</th>
+                                    <th>Preço</th>
+                                    <th>Tag Específica</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for prod in sup.products %}
+                                <tr>
+                                    <td>{{ prod.prod_id }}</td>
+                                    <td>{{ prod.prod_name }}</td>
+                                    <td>R$ {{ "%.2f"|format(prod.prod_price) }}</td>
+                                    <td><span class="badge badge-outline">{{ prod.prod_tag or 'Sem tag' }}</span></td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="4">Nenhum produto cadastrado.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <!-- Seção de Clientes -->
+        <section id="clientes" style="margin-top: 40px;">
+            <h2>Clientes e Conversas</h2>
+            <div class="card">
+                <table class="modern-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Nome</th>
+                            <th>Telefone</th>
+                            <th>Histórico (LLM Context)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cli in clients %}
+                        <tr>
+                            <td>{{ cli.client_id }}</td>
+                            <td><strong>{{ cli.user_name }}</strong></td>
+                            <td>{{ cli.user_number }}</td>
+                            <td>
+                                <div class="chat-log">
+                                    {{ cli.client_content or 'Nenhuma conversa salva.' }}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <!-- SCRIPT DE INTERATIVIDADE -->
+    <script>
+        // Função para Abrir/Fechar as seções dos fornecedores
+        function toggleSection(headerElement) {
+            // Busca a div de conteúdo que fica logo após o cabeçalho
+            const content = headerElement.nextElementSibling;
+            const icon = headerElement.querySelector('.toggle-icon');
+            
+            if (content.style.display === "none" || content.style.display === "") {
+                content.style.display = "block";
+                icon.textContent = "▲ Ocultar";
+            } else {
+                content.style.display = "none";
+                icon.textContent = "▼ Expandir";
+            }
+        }
+
+        // Função para Filtrar os Cartões baseando-se nas Tags
+        function filterTags() {
+            const input = document.getElementById('tagFilter').value.toLowerCase().trim();
+            const cards = document.querySelectorAll('.supplier-card');
+
+            cards.forEach(card => {
+                const tags = card.querySelectorAll('.tags-container .badge');
+                let hasMatch = false;
+
+                // Se o campo de pesquisa estiver vazio, mostra todos os cartões
+                if (input === '') {
+                    hasMatch = true;
+                } else {
+                    // Verifica se alguma das tags do cartão inclui o texto digitado
+                    tags.forEach(tag => {
+                        if (tag.textContent.toLowerCase().includes(input)) {
+                            hasMatch = true;
+                        }
+                    });
+                }
+
+                // Oculta ou exibe o cartão inteiro
+                card.style.display = hasMatch ? "block" : "none";
+                
+                // Opcional: Se houver um "match" na pesquisa, abre automaticamente a sanfona
+                if (hasMatch && input !== '') {
+                    const content = card.querySelector('.collapsible-content');
+                    const icon = card.querySelector('.toggle-icon');
+                    content.style.display = "block";
+                    icon.textContent = "▲ Ocultar";
+                }
+            });
+        }
+    </script>
+</body>
+</html>
