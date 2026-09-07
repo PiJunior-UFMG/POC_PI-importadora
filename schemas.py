@@ -1,11 +1,16 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
+class ChatMessage(BaseModel):
+    sender_type: str  # "User" ou "Bot"
+    step: str         # "start", "awaiting_name", "finished", "awaiting_purchase", etc.
+    content: str      # O texto da mensagem
+
 class ClientCache(BaseModel):
     id: Optional[int] = None
     name: str = ""
     num: str
-    msg: str = ""
+    msg: List[ChatMessage] = []
     step: str = "start"
 
 class ProductRecommendation(BaseModel):

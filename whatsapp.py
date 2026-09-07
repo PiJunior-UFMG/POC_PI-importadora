@@ -14,7 +14,7 @@ from database import get_db, AsyncSessionLocal
 from models import Client as DBClient
 from models import Supplier, Product
 from agents import get_message_context, extract_product_tags, recommend_products
-from schemas import ClientCache
+from schemas import ClientCache, ChatMessage
 
 router = APIRouter()
 
@@ -29,6 +29,14 @@ twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 # configurações do cache
 user_cache: Dict[str, ClientCache] = {}
 
+def add_to_history(cache: ClientCache, sender_type: str, content: str):
+    """Adiciona uma mensagem estruturada ao histórico do cache do cliente."""
+    cache.messages.append(ChatMessage(
+        sender_type=sender_type,
+        step=cache.step,
+        content=content
+    ))
+
 def answer_message(body: str, cache: Optional[ClientCache] = None) -> Response:
     """
     Gera a resposta passiva (TwiML) para fechar a requisição HTTP atual.
@@ -39,10 +47,7 @@ def answer_message(body: str, cache: Optional[ClientCache] = None) -> Response:
     twiml_msg.body(body)
     
     if cache is not None:
-        if cache.msg:
-            cache.msg += f"\nBot: {body}"
-        else:
-            cache.msg = f"Bot: {body}"
+        add_to_history(cache, "Bot", body)
             
     return Response(content=str(response), media_type="application/xml")
 
@@ -59,12 +64,8 @@ def send_message(to_number: str, body: str, cache: Optional[ClientCache] = None)
             to=to_number
         )
         
-        # Atualiza o histórico no cache, se fornecido
         if cache is not None:
-            if cache.msg:
-                cache.msg += f"\nBot: {body}"
-            else:
-                cache.msg = f"Bot: {body}"
+            add_to_history(cache, "Bot", body)
                 
     except Exception as e:
         print(f"Erro ao enviar mensagem via REST para {to_number}: {e}")
@@ -162,13 +163,10 @@ async def whatsapp_bot(
         else:
             cache = ClientCache(num=sender, step="awaiting_name")
             user_cache[sender] = cache
+            add_to_history(cache, "User", original_message)
             return answer_message("Olá! Sou o assistente virtual da distribuidora. Para começarmos, qual é o seu nome?", cache)
             
-    # Salva a mensagem do usuário no histórico
-    if cache.msg:
-        cache.msg += f"\nUser: {original_message}"
-    else:
-        cache.msg = f"User: {original_message}"
+    add_to_history(cache, "User", original_message)
     
     # --- ROTEAMENTO DO FLUXO ---
     if cache.step == 'awaiting_name':
