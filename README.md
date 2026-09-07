@@ -1,5 +1,11 @@
 # POC_PI-importadora
 
+## Todo List
+[ ] Coluna de categorias para cada produto (facilitar a query e não ter que carregar todos os produtos para IA)
+[ ] Modificar categorias de supplier para ser personalizável
+[ ] validação do nome do cliente ao adiciona-lo na db
+
+
 ## ER-Diagram
 
 ```mermaid
@@ -28,6 +34,7 @@ erDiagram
         string sup_category "Categoria de atuação (ENUM)"
         string sup_number "Contato telefônico"
         string sup_email "E-mail de contato"
+        json   sup_tags "As tags presentes nos produtos"
     }
 
     PRODUCT {
@@ -35,6 +42,7 @@ erDiagram
         string prod_name "Nome comercial do produto"
         float prod_price "Preço unitário atual"
         int sup_id FK "Chave estrangeira referenciando SUPPLIER"
+        string prod_tag "Mapeia o tipo/característica do produto"
     }
 
     PURCHASE {
