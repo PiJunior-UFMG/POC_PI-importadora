@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from typing import Optional
 
 from models import Supplier, Product
-from schemas import ProductRecommendation, ProductRecommendationList
+from schemas import ProductRecommendation, ProductRecommendationList, FeedbackResult
 from logger import log_agent_usage
 
 load_dotenv()
@@ -370,3 +370,41 @@ async def resolve_client_problem(client_message: str, client_name: str, client_s
     except Exception as e:
         print(f"Erro ao gerar resolução de problema com IA: {e}")
         return "Sinto muito pelo transtorno. Houve um erro no meu sistema, mas nossa equipe humana entrará em contato em breve para ajudar você."
+
+async def extract_feedback_metrics(client_message: str) -> dict:
+    """Extrai CSAT e NPS de uma mensagem de feedback em linguagem natural."""
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "extract_feedback.txt")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    formatted_prompt = template.replace("{client_message}", client_message)
+
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Você é um classificador JSON especializado em métricas de satisfação (NPS/CSAT)."},
+                {"role": "user", "content": formatted_prompt}
+            ],
+            temperature=0.1,
+            response_format={"type": "json_object"}
+        )
+        
+        # --- REGISTRO DE LOG ---
+        if response.usage:
+            from logger import log_agent_usage
+            log_agent_usage(
+                agent_name="extract_feedback", 
+                prompt_tokens=response.usage.prompt_tokens, 
+                completion_tokens=response.usage.completion_tokens
+            )
+
+        content = response.choices[0].message.content
+        data = json.loads(content)
+        validated_data = FeedbackResult(**data)
+        
+        return validated_data.model_dump()
+        
+    except Exception as e:
+        print(f"Erro ao extrair feedback com IA: {e}")
+        return {"nps_score": 0, "csat_score": 0, "summary": "Erro ao processar feedback."}

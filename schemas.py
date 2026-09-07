@@ -27,3 +27,8 @@ class ProductRecommendationList(BaseModel):
 
     class Config:
         populate_by_name = True
+
+class FeedbackResult(BaseModel):
+    nps_score: int
+    csat_score: int
+    summary: str

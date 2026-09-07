@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from database import get_db, AsyncSessionLocal
 from models import Client as DBClient
 from models import Supplier, Product,Purchase
-from agents import get_message_context, extract_product_tags, recommend_products, summary_messages,confirm_purchase,generate_proactive_greeting, resolve_client_problem
+from agents import get_message_context, extract_product_tags, recommend_products, summary_messages,confirm_purchase,generate_proactive_greeting, resolve_client_problem, extract_feedback_metrics
 from schemas import ClientCache, ChatMessage
 
 router = APIRouter()
@@ -205,7 +205,37 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
                 client_summary=client_summary, 
                 catalog_data=catalog_info_str
             )
+
+    elif intention == "feedback":
+        async with AsyncSessionLocal() as db:
+            from models import Client as DBClient
             
+            # 1. Aciona o agente para traduzir a mensagem em notas
+            feedback_data = await extract_feedback_metrics(original_message)
+            
+            # 2. Salva as notas no banco de dados do cliente
+            if cache and cache.id:
+                db_client = await db.get(DBClient, cache.id)
+                if db_client:
+                    db_client.nps_score = feedback_data["nps_score"]
+                    db_client.csat_score = feedback_data["csat_score"]
+                    db_client.last_feedback = feedback_data["summary"]
+                    await db.commit()
+            
+            # 3. Prepara a mensagem de agradecimento
+            if feedback_data["nps_score"] >= 9:
+                reply = "Que notícia maravilhosa! 😍 Muito obrigado pela confiança de sempre. Até a próxima compra!"
+            elif feedback_data["nps_score"] >= 7:
+                reply = "Muito obrigado pelo seu retorno! Vamos continuar trabalhando para entregar uma experiência nota 10 na próxima vez. 🚀"
+            else:
+                reply = "Agradeço a sinceridade. Peço desculpas se a experiência não foi ideal, registrei seu comentário para melhorarmos! 🤝"
+            
+            # 4. Finaliza a sessão e consolida o resumo geral
+            if cache:
+                cache.step = "finished"
+                # Aqui aproveitamos para atualizar o client_content (histórico) incluindo a compra + o feedback
+                await update_client_summary(cache, db)
+
         if cache:
             # Mantém em estado finalizado, permitindo que a próxima mensagem inicie um fluxo normal
             cache.step = "finished"
@@ -327,10 +357,11 @@ async def whatsapp_bot(
             await db.commit()
             
             cache.suggested_products = []
-            cache.step = "finished"
-            await update_client_summary(cache, db)
+            cache.step = "awaiting_feedback"
+            recibo_texto = "\n".join(reply_lines)
+            recibo_texto += "\n\n_Para me ajudar a melhorar, como você avalia sua experiência hoje de 0 a 10? Pode deixar um comentário rápido se quiser!_ ⭐"
             
-            return answer_message("\n".join(reply_lines), cache)
+            return answer_message(recibo_texto, cache)
         
         elif sub_intention == "sugestoes":
             reply = "💡 Entendido! Estou buscando opções alternativas e mais baratas para você..."
@@ -347,6 +378,12 @@ async def whatsapp_bot(
             background_tasks.add_task(manage_agent, sender, original_message, "compra")
             return answer_message(reply, cache)
 
+    elif cache.step == 'awaiting_feedback':
+        # Avisa ao usuário que estamos processando, pois a IA será chamada ativamente
+        holding_msg = "🙏 Processando sua avaliação..."
+        background_tasks.add_task(manage_agent, sender, original_message, "feedback")
+        return answer_message(holding_msg, cache)
+    
     # --- ESTADO NORMAL / FINALIZADO ---
     elif cache.step == 'finished':
         # Identifica a intenção global usando o prompt padrão
