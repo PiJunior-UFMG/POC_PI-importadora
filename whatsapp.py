@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from database import get_db, AsyncSessionLocal
 from models import Client as DBClient
 from models import Supplier, Product,Purchase
-from agents import get_message_context, extract_product_tags, recommend_products, summary_messages,confirm_purchase
+from agents import get_message_context, extract_product_tags, recommend_products, summary_messages,confirm_purchase,generate_proactive_greeting
 from schemas import ClientCache, ChatMessage
 
 router = APIRouter()
@@ -136,6 +136,39 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
             reply = f"🛒 Analisei seu pedido, mas não encontrei novos produtos compatíveis com: {texto_tags}"
             if cache:
                 cache.step = "finished"
+
+    elif intention == "saudacao":
+        async with AsyncSessionLocal() as db:
+            from models import Supplier, Product, Client as DBClient
+            from sqlalchemy.orm import selectinload
+            from sqlalchemy import select
+            
+            # 1. Resgata informações básicas e histórico do cliente
+            db_client = await db.get(DBClient, cache.id) if cache and cache.id else None
+            client_summary = db_client.client_content if db_client and db_client.client_content else ""
+            client_name = db_client.user_name if db_client else "Cliente"
+
+            # 2. Gera um cardápio rápido para a IA usar nas sugestões
+            stmt = select(Supplier).options(selectinload(Supplier.products))
+            result = await db.execute(stmt)
+            suppliers = result.scalars().all()
+            
+            catalog_lines = [
+                f"Produto: {prod.prod_name} | Preço: R${prod.prod_price:.2f} | Tag: {prod.prod_tag or ''}"
+                for sup in suppliers for prod in sup.products
+            ]
+            catalog_info_str = "\n".join(catalog_lines)
+
+            # 3. Executa o Agente
+            reply = await generate_proactive_greeting(
+                client_message=original_message, 
+                client_name=client_name, 
+                client_summary=client_summary, 
+                catalog_data=catalog_info_str
+            )
+
+        if cache:
+            cache.step = "finished"
 
     elif intention == "problema":
         if cache:
@@ -288,18 +321,20 @@ async def whatsapp_bot(
             ["saudacao", "compra", "problema", "verificacao"]
         )
         
-        heavy_intentions = ["compra", "problema"]
+        heavy_intentions = ["compra", "problema", "saudacao"]
         
         if intention in heavy_intentions:
             if intention == "compra":
                 holding_msg = "⏳ Entendi que deseja fazer um pedido. Vou buscar os produtos disponíveis no banco de dados, só um instante..."
-                cache.step = "awaiting_purchase" # Trava no estado de compra
+                cache.step = "awaiting_purchase"
             elif intention == "problema":
                 holding_msg = "⏳ Compreendi que há um problema. Vou registrar os detalhes e notificar a equipe, um momento..."
                 cache.step = "finished"
                 await update_client_summary(cache, db)
-            else:
-                holding_msg = "⏳ Processando sua solicitação no sistema..."
+            elif intention == "saudacao":
+                # Mensagem de espera suave enquanto a IA lê o histórico
+                holding_msg = "👋 Olá! Só um instante enquanto verifico as novidades por aqui..."
+                cache.step = "finished"
             
             background_tasks.add_task(manage_agent, sender, original_message, intention)
             return answer_message(holding_msg, cache)
