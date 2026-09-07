@@ -4,7 +4,7 @@
 [ ] Coluna de categorias para cada produto (facilitar a query e não ter que carregar todos os produtos para IA)
 [ ] Modificar categorias de supplier para ser personalizável
 [ ] validação do nome do cliente ao adiciona-lo na db
-
+[ ] Adicionar método alternativo de descobrir intenção numa mensagem
 
 ## ER-Diagram
 

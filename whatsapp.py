@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 
 # Imports do seu projeto
 from database import get_db, AsyncSessionLocal
-from models import Client as DBClient 
+from models import Client as DBClient
+from agents import get_message_context 
 
 router = APIRouter()
 
@@ -73,23 +74,26 @@ def send_message(to_number: str, body: str, cache: Optional[ClientCache] = None)
     except Exception as e:
         print(f"Erro ao enviar mensagem via REST para {to_number}: {e}")
 
-async def get_message_context(sender_num: str, original_message: str):
+async def manage_agent(sender_num: str, original_message: str, intention: str):
     """
-    Função abstraída que será expandida com IA e NLP futuramente.
+    Gerencia o agente responsável com base na intenção já triada.
+    No futuro, cada 'if' aqui chamará um agente de IA especializado diferente.
     """
-    # 1. Simula o tempo de chamada para a LLM
-    await asyncio.sleep(4) 
-    
-    # 2. Busca de dados no banco (se necessário)
-    async with AsyncSessionLocal() as db:
-        # stmt = select(Product)...
-        pass
-    
-    resposta_da_ia = f"✅ Análise concluída! Processei a sua mensagem: '{original_message}' e consultei o estoque."
-    
-    # 3. Usa a função abstraída send_message
     cache = user_cache.get(sender_num)
-    send_message(to_number=sender_num, body=resposta_da_ia, cache=cache)
+    
+    # Roteamento baseado na intenção recebida
+
+    if intention == "compra":
+        reply = "Entendi que você deseja fazer um pedido! (Função de compra em desenvolvimento)."
+        
+    elif intention == "problema":
+        reply = "Certo, entendi seu problema! vou avisar a chefia"
+        
+    else:
+        reply = "Desculpe, não compreendi muito bem. Pode reformular?"
+
+    # Envia a resposta ativamente pelo Twilio REST
+    send_message(to_number=sender_num, body=reply, cache=cache)
 
 @router.post("")
 async def whatsapp_bot(
@@ -163,8 +167,36 @@ async def whatsapp_bot(
         return answer_message(f"Prazer, {cache.name}! Seu cadastro foi feito. ✅\nComo posso ajudar?", cache)
         
     elif cache.step == 'finished':
-        # Delega o processamento pesado e envia resposta rápida
-        background_tasks.add_task(get_message_context, sender, original_message)
-        return answer_message("⏳ Entendi! Vou processar o seu pedido, só um instante...", cache)
+        # 1. Identifica a intenção de forma instantânea via Regex (agents.py)
+        intention = get_message_context(original_message)
         
+        # 2. Lista de intenções que exigem processamento pesado (DB / IA)
+        heavy_intentions = ["compra", "problema"]
+        
+        if intention in heavy_intentions:
+            if intention == "compra":
+                holding_msg = "⏳ Entendi que deseja fazer um pedido. Vou buscar os produtos disponíveis no banco de dados, só um instante..."
+            elif intention == "problema":
+                holding_msg = "⏳ Compreendi que há um problema. Vou registrar os detalhes e notificar a equipe, um momento..."
+            else:
+                holding_msg = "⏳ Processando sua solicitação no sistema..."
+            
+            # Aciona o gerenciador de agentes em segundo plano
+            background_tasks.add_task(manage_agent, sender, original_message, intention)
+            
+            # Responde rápido ao webhook com o aviso contextual
+            return answer_message(holding_msg, cache)
+
+        # mensagens que são mais leves de processar (envio rápido)
+        else:           
+            if intention == "saudacao":
+                reply = "Olá! Como posso ajudar você hoje?"
+            elif intention == "verificacao":
+                reply = "Verifiquei e não encontrei registros recentes por aqui."
+            else:
+                reply = "Desculpe, não compreendi muito bem. Poderia reformular?"
+                
+            # Retorna a resposta direta imediatamente
+            return answer_message(reply, cache)   
+    
     return answer_message("Desculpe, ocorreu um erro de contexto.", cache)
