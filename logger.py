@@ -1,32 +1,28 @@
 import logging
 import sys
+import os
 
 logger = logging.getLogger("agent_metrics")
 logger.setLevel(logging.INFO)
-
 logger.propagate = False 
 
 if not logger.handlers:
-    handler = logging.StreamHandler(sys.stdout)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_formatter = logging.Formatter("\033[32mAGENT:\033[0m    %(message)s")
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
     
-    formatter = logging.Formatter("\033[32mAGENT:\033[0m    %(message)s")
-    handler.setFormatter(formatter)
-    
-    logger.addHandler(handler)
+    file_handler = logging.FileHandler("agent_metrics.log", encoding="utf-8")
+    file_formatter = logging.Formatter("AGENT: %(message)s")
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
 
 def log_agent_usage(agent_name: str, prompt_tokens: int, completion_tokens: int):
-    """
-    Registra no terminal o uso do agente substituindo 'INFO:' por 'AGENT:' 
-    e mantendo o visual idêntico ao do FastAPI.
-    """
     total_tokens = prompt_tokens + completion_tokens
-    
-    # Formatação alinhada para os dados de entrada e saída
     log_message = (
         f"{agent_name.ljust(22)} | "
         f"In: {str(prompt_tokens).rjust(4)} | "
         f"Out: {str(completion_tokens).rjust(4)} | "
         f"Total: {str(total_tokens).rjust(5)}"
     )
-    
     logger.info(log_message)

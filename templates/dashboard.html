@@ -6,6 +6,7 @@
     <title>Dashboard - P.I. Importadora</title>
     <link rel="stylesheet" href="/static/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    
 </head>
 <body>
     <div class="sidebar">
@@ -13,6 +14,8 @@
         <ul>
             <li><a href="#fornecedores">Fornecedores & Produtos</a></li>
             <li><a href="#clientes">Histórico de Clientes</a></li>
+            <li><a href="#compras">Registro de Compras</a></li>
+            <li><a href="#metricas">Métricas de IA</a></li>
         </ul>
     </div>
 
@@ -21,10 +24,11 @@
             <h1>Painel de Controle</h1>
         </header>
 
-        <!-- Seção de Fornecedores -->
+        <!-- ========================================== -->
+        <!-- SEÇÃO: FORNECEDORES E PRODUTOS             -->
+        <!-- ========================================== -->
         <section id="fornecedores">
-            
-            <div class="controls-bar">
+            <div class="controls-bar" style="display: flex; gap: 20px;">
                 <div class="card add-card" style="flex: 1; margin-bottom: 0;">
                     <h3>Novo Fornecedor</h3>
                     <form action="/dashboard/supplier/add" method="post" style="display: flex; gap: 10px;">
@@ -34,9 +38,8 @@
                     </form>
                 </div>
                 
-                <!-- Nova Barra de Pesquisa de Tags -->
-                <div class="card filter-card" style="flex: 1; margin-bottom: 0; margin-left: 20px;">
-                    <h3>Filtrar por Tag</h3>
+                <div class="card filter-card" style="flex: 1; margin-bottom: 0;">
+                    <h3>Filtrar por Tag (Fornecedor ou Produto)</h3>
                     <input type="text" id="tagFilter" placeholder="🔍 Digite uma tag para filtrar..." onkeyup="filterTags()" style="width: 100%;">
                 </div>
             </div>
@@ -44,28 +47,37 @@
             <div style="margin-top: 24px;">
                 {% for sup in suppliers %}
                 <div class="card supplier-card">
-                    <!-- Cabeçalho Clicável (Dropdown) -->
+                    <!-- CABEÇALHO DA DISTRIBUIDORA -->
                     <div class="sup-header" onclick="toggleSection(this)">
                         <div>
                             <h2>{{ sup.sup_name }} <span>({{ sup.sup_category }})</span></h2>
                         </div>
                         
                         <div class="header-actions" style="display: flex; gap: 15px; align-items: center;">
-                            <!-- Formulário de tag: stopPropagation evita que o clique feche a seção -->
-                            <form action="/dashboard/supplier/{{ sup.sup_id }}/tag" method="post" class="tag-form" onclick="event.stopPropagation()">
-                                <input type="text" name="new_tag" placeholder="Nova Tag..." required>
-                                <button type="submit" class="btn-secondary">+ Tag</button>
+                            <form action="/dashboard/supplier/{{ sup.sup_id }}/tag" method="post" class="tag-form" onclick="event.stopPropagation()" style="display: flex; gap: 5px;">
+                                <input type="text" name="new_tag" placeholder="Nova Tag..." required style="padding: 5px; width: 100px;">
+                                <button type="submit" class="btn-secondary btn-small">+ Tag</button>
                             </form>
-                            <span class="toggle-icon" style="font-size: 12px; color: #6b7280;">▼ Expandir</span>
+                            
+                            <!-- Botão Seguro usando data-attributes -->
+                            <button type="button" 
+                                    class="btn-primary btn-small" 
+                                    data-id="{{ sup.sup_id }}" 
+                                    data-name="{{ sup.sup_name }}" 
+                                    onclick="event.stopPropagation(); openProductModal('add', this)">
+                                + Produto
+                            </button>
+                            
+                            <span class="toggle-icon" style="font-size: 12px; color: #6b7280; margin-left: 10px;">▼ Expandir</span>
                         </div>
                     </div>
                     
-                    <!-- Conteúdo Ocultável -->
+                    <!-- CONTEÚDO OCULTÁVEL (PRODUTOS) -->
                     <div class="collapsible-content" style="display: none;">
                         <div class="tags-container">
                             <strong>Tags do Fornecedor:</strong>
                             {% for tag in sup.sup_tags %}
-                                <span class="badge">{{ tag }}</span>
+                                <span class="badge sup-tag">{{ tag }}</span>
                             {% else %}
                                 <span class="text-muted">Nenhuma tag cadastrada.</span>
                             {% endfor %}
@@ -79,18 +91,31 @@
                                     <th>Produto</th>
                                     <th>Preço</th>
                                     <th>Tag Específica</th>
+                                    <th>Ações</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for prod in sup.products %}
-                                <tr>
+                                <tr class="product-row">
                                     <td>{{ prod.prod_id }}</td>
                                     <td>{{ prod.prod_name }}</td>
                                     <td>R$ {{ "%.2f"|format(prod.prod_price) }}</td>
-                                    <td><span class="badge badge-outline">{{ prod.prod_tag or 'Sem tag' }}</span></td>
+                                    <td><span class="badge badge-outline prod-tag">{{ prod.prod_tag or '' }}</span></td>
+                                    <td>
+                                        <!-- Botão Seguro usando data-attributes -->
+                                        <button type="button" 
+                                                class="btn-small btn-edit" 
+                                                data-id="{{ prod.prod_id }}" 
+                                                data-name="{{ prod.prod_name }}" 
+                                                data-price="{{ prod.prod_price }}" 
+                                                data-tag="{{ prod.prod_tag or '' }}" 
+                                                onclick="openProductModal('edit', this)">
+                                            ✏️ Editar
+                                        </button>
+                                    </td>
                                 </tr>
                                 {% else %}
-                                <tr><td colspan="4">Nenhum produto cadastrado.</td></tr>
+                                <tr><td colspan="5" style="text-align: center;">Nenhum produto cadastrado.</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -100,7 +125,9 @@
             </div>
         </section>
 
-        <!-- Seção de Clientes -->
+        <!-- ========================================== -->
+        <!-- SEÇÃO: CLIENTES E CONVERSAS                -->
+        <!-- ========================================== -->
         <section id="clientes" style="margin-top: 40px;">
             <h2>Clientes e Conversas</h2>
             <div class="card">
@@ -120,7 +147,7 @@
                             <td><strong>{{ cli.user_name }}</strong></td>
                             <td>{{ cli.user_number }}</td>
                             <td>
-                                <div class="chat-log">
+                                <div class="chat-log" style="max-height: 100px; overflow-y: auto; font-size: 13px;">
                                     {{ cli.client_content or 'Nenhuma conversa salva.' }}
                                 </div>
                             </td>
@@ -130,16 +157,124 @@
                 </table>
             </div>
         </section>
+
+        <!-- ========================================== -->
+        <!-- SEÇÃO: REGISTRO DE COMPRAS                 -->
+        <!-- ========================================== -->
+        <section id="compras" style="margin-top: 40px;">
+            <h2>Registro de Compras</h2>
+            <div class="card">
+                <table class="modern-table">
+                    <thead>
+                        <tr>
+                            <th>ID Compra</th>
+                            <th>Data</th>
+                            <th>Cliente</th>
+                            <th>Produto</th>
+                            <th>Distribuidora</th>
+                            <th>Preço</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pur in purchases %}
+                        <tr>
+                            <td>#{{ pur.pur_id }}</td>
+                            <td>{{ pur.occurred_datetime.strftime('%d/%m/%Y %H:%M') }}</td>
+                            <td><strong>{{ pur.client.user_name }}</strong></td>
+                            <td>{{ pur.product.prod_name }}</td>
+                            <td>{{ pur.product.supplier.sup_name }}</td>
+                            <td>R$ {{ "%.2f"|format(pur.product.prod_price) }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="6" style="text-align: center;">Nenhuma compra registrada ainda.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- SEÇÃO: MÉTRICAS E AGENTES                  -->
+        <!-- ========================================== -->
+        <section id="metricas" style="margin-top: 40px;">
+            <h2>Métricas e Uso de Agentes (IA)</h2>
+            
+            <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                <div class="card" style="flex: 1; text-align: center;">
+                    <h3 style="color: #6b7280; font-size: 14px; text-transform: uppercase;">Total de Chamadas</h3>
+                    <p style="font-size: 28px; font-weight: bold; margin-top: 10px; color: #2563eb;">{{ total_calls|default(0) }}</p>
+                </div>
+                <div class="card" style="flex: 1; text-align: center;">
+                    <h3 style="color: #6b7280; font-size: 14px; text-transform: uppercase;">Total Tokens In (Prompt)</h3>
+                    <p style="font-size: 28px; font-weight: bold; margin-top: 10px; color: #d97706;">{{ total_tokens_in|default(0) }}</p>
+                </div>
+                <div class="card" style="flex: 1; text-align: center;">
+                    <h3 style="color: #6b7280; font-size: 14px; text-transform: uppercase;">Total Tokens Out (Completion)</h3>
+                    <p style="font-size: 28px; font-weight: bold; margin-top: 10px; color: #16a34a;">{{ total_tokens_out|default(0) }}</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <table class="modern-table">
+                    <thead>
+                        <tr>
+                            <th>Agente (Função)</th>
+                            <th>Qtd. Chamadas</th>
+                            <th>Tokens In (Média / Total)</th>
+                            <th>Tokens Out (Média / Total)</th>
+                            <th>Custo Total (Tokens)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for agent in agent_metrics %}
+                        <tr>
+                            <td><strong>{{ agent.name }}</strong></td>
+                            <td>{{ agent.calls }}</td>
+                            <td>~{{ agent.avg_in }} / {{ agent.total_in }}</td>
+                            <td>~{{ agent.avg_out }} / {{ agent.total_out }}</td>
+                            <td><strong>{{ agent.total_in + agent.total_out }}</strong></td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" style="text-align: center;">Nenhuma métrica de agente registrada no log.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
     </div>
 
-    <!-- SCRIPT DE INTERATIVIDADE -->
+    <!-- ========================================== -->
+    <!-- MODAL INVISÍVEL (HTML)                     -->
+    <!-- ========================================== -->
+    <div id="productModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal()">&times;</span>
+            <h3 id="modalTitle">Adicionar Produto</h3>
+            <p id="modalSubtitle" style="color: #6b7280; font-size: 14px; margin-bottom: 15px;"></p>
+            
+            <form id="productForm" method="post" action="" class="modal-form">
+                <input type="text" name="prod_name" id="prodName" required placeholder="Nome do Produto">
+                <!-- Usar step="any" evita erros em navegadores com decimais -->
+                <input type="number" step="any" name="prod_price" id="prodPrice" required placeholder="Preço (R$)">
+                <input type="text" name="prod_tag" id="prodTag" placeholder="Tag do Produto (Ex: gamer, 1TB)">
+                <button type="submit" class="btn-primary" id="modalSubmitBtn" style="padding: 12px; margin-top: 10px;">Salvar</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- SCRIPT BLINDADO                            -->
+    <!-- ========================================== -->
     <script>
-        // Função para Abrir/Fechar as seções dos fornecedores
+        // Lógica de Sanfona
         function toggleSection(headerElement) {
-            // Busca a div de conteúdo que fica logo após o cabeçalho
             const content = headerElement.nextElementSibling;
             const icon = headerElement.querySelector('.toggle-icon');
-            
             if (content.style.display === "none" || content.style.display === "") {
                 content.style.display = "block";
                 icon.textContent = "▲ Ocultar";
@@ -149,38 +284,81 @@
             }
         }
 
-        // Função para Filtrar os Cartões baseando-se nas Tags
+        // Filtro Profundo (Fornecedor + Produto)
         function filterTags() {
             const input = document.getElementById('tagFilter').value.toLowerCase().trim();
             const cards = document.querySelectorAll('.supplier-card');
 
             cards.forEach(card => {
-                const tags = card.querySelectorAll('.tags-container .badge');
                 let hasMatch = false;
+                
+                const supTags = card.querySelectorAll('.sup-tag');
+                supTags.forEach(tag => {
+                    if (tag.textContent.toLowerCase().includes(input)) hasMatch = true;
+                });
 
-                // Se o campo de pesquisa estiver vazio, mostra todos os cartões
-                if (input === '') {
-                    hasMatch = true;
-                } else {
-                    // Verifica se alguma das tags do cartão inclui o texto digitado
-                    tags.forEach(tag => {
-                        if (tag.textContent.toLowerCase().includes(input)) {
-                            hasMatch = true;
-                        }
-                    });
-                }
+                const prodTags = card.querySelectorAll('.prod-tag');
+                prodTags.forEach(tag => {
+                    if (tag.textContent.toLowerCase().includes(input)) hasMatch = true;
+                });
 
-                // Oculta ou exibe o cartão inteiro
+                if (input === '') hasMatch = true;
+
                 card.style.display = hasMatch ? "block" : "none";
                 
-                // Opcional: Se houver um "match" na pesquisa, abre automaticamente a sanfona
                 if (hasMatch && input !== '') {
-                    const content = card.querySelector('.collapsible-content');
-                    const icon = card.querySelector('.toggle-icon');
-                    content.style.display = "block";
-                    icon.textContent = "▲ Ocultar";
+                    card.querySelector('.collapsible-content').style.display = "block";
+                    card.querySelector('.toggle-icon').textContent = "▲ Ocultar";
                 }
             });
+        }
+
+        // --- LÓGICA DO MODAL (BLINDADA) ---
+        const modal = document.getElementById('productModal');
+        const form = document.getElementById('productForm');
+
+        function openProductModal(action, btnElement) {
+            // Extrai os dados blindados dos atributos "data-"
+            const id = btnElement.getAttribute('data-id');
+            const nameOrTitle = btnElement.getAttribute('data-name');
+            
+            if (action === 'add') {
+                document.getElementById('modalTitle').textContent = "Adicionar Novo Produto";
+                document.getElementById('modalSubtitle').textContent = "Fornecedor: " + nameOrTitle;
+                // Concatenação segura para a URL
+                form.action = "/dashboard/supplier/" + id + "/product/add"; 
+                
+                document.getElementById('prodName').value = "";
+                document.getElementById('prodPrice').value = "";
+                document.getElementById('prodTag').value = "";
+                document.getElementById('modalSubmitBtn').textContent = "Criar Produto";
+                
+            } else if (action === 'edit') {
+                const price = btnElement.getAttribute('data-price');
+                const tag = btnElement.getAttribute('data-tag');
+                
+                document.getElementById('modalTitle').textContent = "Editar Produto";
+                document.getElementById('modalSubtitle').textContent = "Editando informações de: " + nameOrTitle;
+                form.action = "/dashboard/product/" + id + "/edit";
+                
+                document.getElementById('prodName').value = nameOrTitle;
+                document.getElementById('prodPrice').value = price;
+                document.getElementById('prodTag').value = tag;
+                document.getElementById('modalSubmitBtn').textContent = "Salvar Alterações";
+            }
+            
+            modal.style.display = "block";
+        }
+
+        function closeModal() {
+            modal.style.display = "none";
+        }
+
+        // Fecha modal ao clicar no fundo (fora da caixa branca)
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                closeModal();
+            }
         }
     </script>
 </body>
