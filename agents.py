@@ -1,29 +1,52 @@
 import os
-import re
-import json 
+import json
+from openai import OpenAI
+from dotenv import load_dotenv
 
-caminho_intencoes = os.path.join(os.path.dirname(__file__), "intencoes.json")
+load_dotenv()
 
-with open(caminho_intencoes, "r", encoding="utf-8") as f:
-    dicionario_intencoes = json.load(f)
+# Inicializa o cliente apontando para a API do DeepSeek (compatível com OpenAI)
+# O DeepSeek usa a baseUrl oficial: https://api.deepseek.com
+client = OpenAI(
+    api_key=os.environ.get("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com"
+)
 
-REGEX_INTENCOES = {}
-for intencao, palavras in dicionario_intencoes.items():
-    # Monta o padrão: \b(palavra1|palavra2|palavra3)\b
-    padrao = r'\b(' + '|'.join(palavras) + r')\b'
-    # re.IGNORECASE faz com que ignore maiúsculas e minúsculas automaticamente
-    REGEX_INTENCOES[intencao] = re.compile(padrao, re.IGNORECASE)
+# Carrega o prompt externo da pasta prompts/
+prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "message_context.txt")
+with open(prompt_path, "r", encoding="utf-8") as f:
+    PROMPT_TEMPLATE = f.read()
 
 def get_message_context(mensagem: str) -> str:
     """
-    Avalia a mensagem do usuário comparando com as regex pré-compiladas.
+    Analisa a mensagem do usuário utilizando o DeepSeek LLM 
+    com base no prompt estruturado em arquivo externo.
     """
-    # Não precisamos usar .lower() aqui pois o re.IGNORECASE já faz esse trabalho
+    # Injeta a mensagem do usuário dentro do template do prompt
+    formatted_prompt = PROMPT_TEMPLATE.replace("{mensagem}", mensagem)
     
-    # Testa cada padrão compilado contra a mensagem
-    for intencao, regex_compilada in REGEX_INTENCOES.items():
-        if regex_compilada.search(mensagem):
-            return intencao
+    try:
+        # Chamada ao modelo leve e rápido do DeepSeek (deepseek-chat / V3)
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Você é um classificador de intenções preciso e conciso."},
+                {"role": "user", "content": formatted_prompt}
+            ],
+            temperature=0.0,  # Zero criatividade para garantir respostas determinísticas
+            max_tokens=10     # Precisamos apenas de uma palavra como resposta
+        )
+        
+        # Limpa o texto retornado pela LLM
+        intencao = response.choices[0].message.content.strip().lower()
+        
+        # Valida se a resposta está dentro das permitidas, caso contrário aplica fallback
+        categorias_validas = ["saudacao", "compra", "problema", "verificacao"]
+        if intencao not in categorias_validas:
+            return "saudacao"
             
-    # Retorno padrão caso não identifique nenhuma palavra-chave
-    return "saudacao"
+        return intencao
+        
+    except Exception as e:
+        print(f"Erro ao consultar o DeepSeek para triagem: {e}")
+        return "saudacao"  # Fallback de segurança caso a API falhe
