@@ -2,12 +2,19 @@ import uvicorn
 import argparse
 import asyncio
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
+import dashboard
 import whatsapp
+from tasks import lifespan
 from database import create_tables
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
 app.include_router(whatsapp.router, prefix="/whatsapp", tags=["WhatsApp Bot"])
+
 
 async def initialize_db(create_db: bool): # verifica se a db existe
     if create_db:
