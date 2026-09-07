@@ -41,7 +41,6 @@ class Product(Base):
     prod_price: Mapped[float] = mapped_column()
     sup_id: Mapped[int] = mapped_column(ForeignKey("supplier.sup_id"))
     
-    # Nova coluna: A tag específica do produto
     prod_tag: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     supplier: Mapped["Supplier"] = relationship(back_populates="products")
