@@ -328,3 +328,45 @@ async def generate_proactive_greeting(client_message: str, client_name: str, cli
     except Exception as e:
         print(f"Erro ao gerar saudação proativa com IA: {e}")
         return f"Olá, {client_name}! Como posso ajudar você hoje?"
+
+async def resolve_client_problem(client_message: str, client_name: str, client_summary: str, catalog_data: str) -> str:
+    """Gera uma resposta empática sugerindo soluções ou contatos para problemas."""
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "problem_resolver.txt")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    summary_str = client_summary if client_summary else "Sem histórico de compras recente."
+
+    formatted_prompt = (
+        template
+        .replace("{client_message}", client_message)
+        .replace("{client_name}", client_name)
+        .replace("{client_summary}", summary_str)
+        .replace("{catalog_data}", catalog_data)
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Você é um especialista em suporte técnico e atendimento humanizado via WhatsApp."},
+                {"role": "user", "content": formatted_prompt}
+            ],
+            temperature=0.3, # Baixa temperatura para não inventar telefones ou dados que não existem
+            max_tokens=300
+        )
+        
+        # --- REGISTRO DE LOG ---
+        if response.usage:
+            from logger import log_agent_usage
+            log_agent_usage(
+                agent_name="resolve_problem", 
+                prompt_tokens=response.usage.prompt_tokens, 
+                completion_tokens=response.usage.completion_tokens
+            )
+
+        return response.choices[0].message.content.strip()
+        
+    except Exception as e:
+        print(f"Erro ao gerar resolução de problema com IA: {e}")
+        return "Sinto muito pelo transtorno. Houve um erro no meu sistema, mas nossa equipe humana entrará em contato em breve para ajudar você."

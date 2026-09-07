@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from database import get_db, AsyncSessionLocal
 from models import Client as DBClient
 from models import Supplier, Product,Purchase
-from agents import get_message_context, extract_product_tags, recommend_products, summary_messages,confirm_purchase,generate_proactive_greeting
+from agents import get_message_context, extract_product_tags, recommend_products, summary_messages,confirm_purchase,generate_proactive_greeting, resolve_client_problem
 from schemas import ClientCache, ChatMessage
 
 router = APIRouter()
@@ -171,9 +171,44 @@ async def manage_agent(sender_num: str, original_message: str, intention: str):
             cache.step = "finished"
 
     elif intention == "problema":
+        async with AsyncSessionLocal() as db:
+            from models import Supplier, Product, Client as DBClient
+            from sqlalchemy.orm import selectinload
+            from sqlalchemy import select
+            
+            # 1. Resgata informações básicas e histórico (para a IA saber o que ele comprou antes)
+            db_client = await db.get(DBClient, cache.id) if cache and cache.id else None
+            client_summary = db_client.client_content if db_client and db_client.client_content else ""
+            client_name = db_client.user_name if db_client else "Cliente"
+
+            # 2. Gera um mapa completo de Produtos E Contatos dos fornecedores
+            stmt = select(Supplier).options(selectinload(Supplier.products))
+            result = await db.execute(stmt)
+            suppliers = result.scalars().all()
+            
+            catalog_lines = []
+            for sup in suppliers:
+                # Usa os campos de contato da sua model (ajuste se os nomes das colunas forem diferentes)
+                contato = getattr(sup, 'sup_number', 'Contato indisponível') 
+                email = getattr(sup, 'sup_email', 'Email indisponível')
+                
+                catalog_lines.append(f"Distribuidora: {sup.sup_name} | Tel: {contato} | Email: {email}")
+                for prod in sup.products:
+                    catalog_lines.append(f"  - Produto: {prod.prod_name} | Preço: R${prod.prod_price:.2f} | Tag: {prod.prod_tag or ''}")
+
+            catalog_info_str = "\n".join(catalog_lines)
+
+            # 3. Executa o Agente de Resolução
+            reply = await resolve_client_problem(
+                client_message=original_message, 
+                client_name=client_name, 
+                client_summary=client_summary, 
+                catalog_data=catalog_info_str
+            )
+            
         if cache:
+            # Mantém em estado finalizado, permitindo que a próxima mensagem inicie um fluxo normal
             cache.step = "finished"
-        reply = "Certo, entendi seu problema! Vou avisar a chefia."
     else:
         reply = "Processamento concluído."
 
