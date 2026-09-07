@@ -333,7 +333,7 @@ async def whatsapp_bot(
                 await update_client_summary(cache, db)
             elif intention == "saudacao":
                 # Mensagem de espera suave enquanto a IA lê o histórico
-                holding_msg = "👋 Olá! Só um instante enquanto verifico as novidades por aqui..."
+                holding_msg = "👋 Olá!"
                 cache.step = "finished"
             
             background_tasks.add_task(manage_agent, sender, original_message, intention)
