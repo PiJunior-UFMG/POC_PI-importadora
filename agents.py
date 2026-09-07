@@ -4,6 +4,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from sqlalchemy import select, or_
 from sqlalchemy.orm import selectinload
+from typing import Optional
 
 from models import Supplier, Product
 from schemas import ProductRecommendation, ProductRecommendationList
@@ -15,14 +16,6 @@ client = OpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com"
 )
-
-prompt_tags_path = os.path.join(os.path.dirname(__file__), "prompts", "extract_tags.txt")
-with open(prompt_tags_path, "r", encoding="utf-8") as f:
-    PROMPT_TAGS_TEMPLATE = f.read()
-
-prompt_rec_path = os.path.join(os.path.dirname(__file__), "prompts", "recommend_products.txt")
-with open(prompt_rec_path, "r", encoding="utf-8") as f:
-    PROMPT_RECOMMEND_TEMPLATE = f.read()
 
 def get_message_context(mensagem: str, prompt_filename: str, valid_categories: list) -> str:
     """
@@ -59,6 +52,10 @@ def extract_product_tags(client_message: str, catalog_data: str) -> list:
     Agente responsável por extrair as tags relevantes com base no pedido do cliente 
     e nos dados atuais do catálogo da distribuidora.
     """
+    prompt_tags_path = os.path.join(os.path.dirname(__file__), "prompts", "extract_tags.txt")
+    with open(prompt_tags_path, "r", encoding="utf-8") as f:
+        PROMPT_TAGS_TEMPLATE = f.read()
+
     formatted_prompt = (
         PROMPT_TAGS_TEMPLATE
         .replace("{catalog_data}", catalog_data)
@@ -97,6 +94,10 @@ async def recommend_products(client_message: str, tags: list, db_session) -> lis
     if not tags:
         return []
 
+    prompt_rec_path = os.path.join(os.path.dirname(__file__), "prompts", "recommend_products.txt")
+    with open(prompt_rec_path, "r", encoding="utf-8") as f:
+        PROMPT_RECOMMEND_TEMPLATE = f.read()
+    
     # Query no banco buscando produtos cujas tags ou categorias combinem com as extraídas
     # (Buscando em Product.prod_tag ou Supplier.sup_category/sup_tags)
     stmt = (
@@ -156,3 +157,51 @@ async def recommend_products(client_message: str, tags: list, db_session) -> lis
     except Exception as e:
         print(f"Erro ao recomendar produtos com IA: {e}")
         return []
+
+async def summary_messages(client_messages: list, target_step: Optional[str] = None) -> str:
+    """
+    Resgata o histórico de mensagens e faz um resumo objetivo.
+    Se target_step for informado, restringe o resumo apenas àquele passo específico.
+    """
+    # Filtra as mensagens se um step específico foi solicitado
+    if target_step:
+        filtered_msgs = [m for m in client_messages if m.step == target_step]
+        filter_instruction = f"Restrinja o resumo estritamente aos acontecimentos e diálogos do step: '{target_step}'."
+    else:
+        filtered_msgs = client_messages
+        filter_instruction = "Faça um resumo geral de toda a conversa."
+
+    if not filtered_msgs:
+        return "Não há histórico de mensagens registrado para este critério."
+
+    # Formata o histórico para o prompt
+    formatted_history = "\n".join(
+        f"[{m.sender_type}][Step: {m.step}]: {m.content}" for m in filtered_msgs
+    )
+
+    # Carrega o prompt do arquivo externo
+    prompt_path = os.path.join(os.path.dirname(__file__), "prompts", "summary_messages.txt")
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    formatted_prompt = (
+        template
+        .replace("{chat_history}", formatted_history)
+        .replace("{filter_instruction}", filter_instruction)
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "Você é um assistente analítico especializado em resumos de atendimento."},
+                {"role": "user", "content": formatted_prompt}
+            ],
+            temperature=0.2,
+            max_tokens=300
+        )
+        return response.choices[0].message.content.strip()
+        
+    except Exception as e:
+        print(f"Erro ao gerar resumo de mensagens: {e}")
+        return "Desculpe, ocorreu um erro ao gerar o resumo das mensagens."
